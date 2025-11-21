@@ -81,24 +81,64 @@ class GeminiService:
         return text
 
     @retry_with_backoff(retries=5, initial_delay=2)
-    async def find_equipment_locations(self, plan_images, equipment_list):
+    async def find_equipment_locations(self, plan_images, equipment_list, schedule_text=None, plan_text=None, visual_examples=None):
         prompt = f"""
         You are an expert mechanical engineer. Analyze the provided floor plan images and locate the following equipment:
         {equipment_list}
         
-        For each piece of equipment found, provide its approximate location.
+        For each piece of equipment found, provide its PRECISE location using a bounding box.
         
         Return the result as a JSON list of objects with the following keys:
         - type: The type of equipment found.
         - tag: The specific tag found (e.g., "WSHP-1").
         - page: The page number (1-indexed) where the equipment is found.
-        - x: The x-coordinate (0-100) from the left.
-        - y: The y-coordinate (0-100) from the top.
+        - bbox: [ymin, xmin, ymax, xmax] coordinates (0-1000 scale) of the equipment on the plan. Ensure this box tightly encloses the equipment symbol and its tag.
         - confidence: Your confidence level (0.0-1.0).
         """
         
-        # Prepare content list with prompt and all images
+        if schedule_text:
+            prompt += f"\n\nContext from Mechanical Schedule:\n{schedule_text[:10000]}..." # Truncate to avoid huge context
+            
+        if plan_text:
+            prompt += f"\n\nContext from Floor Plans (Text Extracted):\n{plan_text[:10000]}..." # Truncate
+        
+        # Prepare content list with prompt
         content = [prompt]
+        
+        # Add visual examples if provided
+        if visual_examples and visual_examples.get('image') and visual_examples.get('examples'):
+            try:
+                import base64
+                from PIL import Image
+                import io
+
+                # Decode base64 image
+                img_data = base64.b64decode(visual_examples['image'].split(',')[1])
+                ref_image = Image.open(io.BytesIO(img_data))
+                
+                prompt += "\n\nVISUAL EXAMPLES:\nThe following images are examples of equipment symbols to look for:\n"
+                
+                for example in visual_examples['examples']:
+                    bbox = example['bbox'] # [ymin, xmin, ymax, xmax] 0-1000 scale
+                    
+                    # Convert 0-1000 scale to pixels
+                    width, height = ref_image.size
+                    left = (bbox[1] / 1000) * width
+                    top = (bbox[0] / 1000) * height
+                    right = (bbox[3] / 1000) * width
+                    bottom = (bbox[2] / 1000) * height
+                    
+                    # Crop
+                    cropped = ref_image.crop((left, top, right, bottom))
+                    
+                    # Add to content
+                    content.append(f"Example: {example['name']}")
+                    content.append(cropped)
+                    
+            except Exception as e:
+                print(f"Error processing visual examples: {e}")
+
+        # Add plan images
         if isinstance(plan_images, list):
             content.extend(plan_images)
         else:
@@ -116,4 +156,32 @@ class GeminiService:
             text = text.replace("```json", "").replace("```", "").strip()
             
         print(f"Gemini Location Response: {text}") # Debug log
+        return text
+
+    @retry_with_backoff(retries=5, initial_delay=2)
+    async def extract_grd_symbols(self, image):
+        prompt = """
+        You are an expert mechanical engineer. Analyze the provided cover page image and identify the symbols used for Grilles, Registers, and Diffusers (GRDs).
+        
+        Look for a legend or a schedule that defines these symbols. If found, extract each symbol's bounding box and its description/type.
+        
+        Return the result as a JSON list of objects with the following keys:
+        - id: A unique identifier for the symbol (e.g., "symbol_1").
+        - name: The name or type of the symbol (e.g., "Supply Diffuser", "Return Grille").
+        - description: A brief description if available.
+        - bbox: [ymin, xmin, ymax, xmax] coordinates (0-1000 scale) of the symbol in the image.
+        """
+        
+        response = await self.model.generate_content_async([prompt, image])
+        
+        # Robust JSON extraction
+        import re
+        text = response.text
+        match = re.search(r'\[.*\]', text, re.DOTALL)
+        if match:
+            text = match.group(0)
+        else:
+            text = text.replace("```json", "").replace("```", "").strip()
+            
+        print(f"Gemini Symbol Response: {text}") # Debug log
         return text

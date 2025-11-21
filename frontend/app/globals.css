@@ -1,26 +1,53 @@
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: var(--font-inter);
+
+  --color-neutral-50: #F8F8F8;
+  --color-neutral-100: #EDEDED;
+  --color-neutral-200: #C9C8CF;
+  --color-neutral-300: #AEB0B7;
+  --color-neutral-400: #9E9EA5;
+  --color-neutral-500: #8C8C92;
+  --color-neutral-600: #6C6C71;
+  --color-neutral-700: #535257;
+  --color-neutral-800: #2A2A2F;
+  --color-neutral-900: #18191B;
+
+  --color-bv-blue-50: #E9EEFF;
+  --color-bv-blue-100: #ABB8FF;
+  --color-bv-blue-200: #7383FF;
+  --color-bv-blue-300: #4A3AFF;
+  --color-bv-blue-400: #3F31DE;
+  --color-bv-blue-500: #3528BE;
+  --color-bv-blue-600: #201B80;
+  --color-bv-blue-700: #171063;
+  --color-bv-blue-800: #06042E;
+
+  --color-red-100: #FFDADA;
+  --color-red-500: #EC4343;
+  --color-red-700: #CB5E3C;
+
+  --color-yellow-100: #FFECAA;
+  --color-yellow-500: #FFCC17;
+  --color-yellow-700: #CC9300;
+
+  --color-green-100: #B2FFDA;
+  --color-green-500: #16DA7C;
+  --color-green-700: #0B864B;
+
+  --color-purple-100: #F3E8FF;
+  --color-purple-500: #CC98F6;
+  --color-purple-700: #8621A8;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
 }

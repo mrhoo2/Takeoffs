@@ -41,17 +41,17 @@ export default function UploadStep({ onUploadComplete }: UploadStepProps) {
     };
 
     return (
-        <div className="flex flex-col items-center justify-center p-10 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
-            <h2 className="text-xl font-semibold mb-4 text-gray-700">Upload Mechanical Schedule</h2>
-            <p className="text-sm text-gray-500 mb-6">Select a PDF file containing the mechanical equipment schedule.</p>
+        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-neutral-200 rounded-xl bg-white hover:border-bv-blue-300 transition-colors">
+            <h2 className="text-xl font-bold mb-3 text-neutral-900">Upload Mechanical Schedule</h2>
+            <p className="text-sm text-neutral-500 mb-8">Select a PDF file containing the mechanical equipment schedule.</p>
 
             {error && (
-                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded w-full text-center text-sm">
+                <div className="mb-6 p-4 bg-red-50 border border-red-100 text-red-700 rounded-lg w-full text-center text-sm font-medium">
                     {error}
                 </div>
             )}
 
-            <label className={`cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition-colors ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`cursor-pointer bg-bv-blue-500 hover:bg-bv-blue-600 text-white font-medium py-2.5 px-6 rounded-lg transition-all shadow-sm hover:shadow-md ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 {uploading ? "Processing..." : "Select PDF"}
                 <input
                     type="file"
@@ -62,7 +62,7 @@ export default function UploadStep({ onUploadComplete }: UploadStepProps) {
                 />
             </label>
             {uploading && (
-                <p className="mt-4 text-sm text-blue-600 animate-pulse">
+                <p className="mt-6 text-sm text-bv-blue-600 animate-pulse font-medium">
                     Gemini is analyzing the schedule...
                 </p>
             )}

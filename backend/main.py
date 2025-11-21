@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import os
+import io
+import base64
+import json
 from services.gemini_service import GeminiService
 from services.pdf_service import PDFService
 
@@ -57,16 +60,22 @@ async def upload_schedule(file: UploadFile = File(...)):
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         encoded_images.append(f"data:image/jpeg;base64,{img_str}")
     
+    # Extract text from the schedule PDF
+    schedule_text = await pdf_service.extract_text_from_pdf(content)
+    
     return {
         "filename": file.filename, 
         "equipment": equipment_json,
-        "images": encoded_images
+        "images": encoded_images,
+        "text": schedule_text
     }
 
 @app.post("/upload/plans")
 async def upload_plans(
-    file: UploadFile = File(...), 
-    equipment: str = Form(...) # Expecting JSON string of selected equipment
+    file: UploadFile = File(...),
+    equipment: str = Form(...), # Expecting JSON string of selected equipment
+    schedule_text: str = Form(None),
+    visual_examples: str = Form(None) # Expecting JSON string of visual examples
 ):
     content = await file.read()
     images = await pdf_service.convert_pdf_to_images(content)
@@ -74,26 +83,73 @@ async def upload_plans(
     if not images:
         raise HTTPException(status_code=400, detail="Could not convert PDF to images")
     
-    # Process first 5 pages
-    processed_images = images[:5]
+    # Extract text from plans for context
+    plan_text = await pdf_service.extract_text_from_pdf(content)
     
-    locations_json = await gemini_service.find_equipment_locations(processed_images, equipment)
+    # Process images with Gemini
+    # Note: The original code limited to 5 pages for processed_images,
+    # but the requested change processes all images.
+    processed_images = images
     
-    # Convert images to base64
+    # Parse visual examples if provided
+    examples_data = None
+    if visual_examples:
+        try:
+            examples_data = json.loads(visual_examples)
+        except json.JSONDecodeError:
+            print("Failed to parse visual examples JSON")
+
+    locations_json = await gemini_service.find_equipment_locations(
+        processed_images, 
+        equipment, 
+        schedule_text=schedule_text, 
+        plan_text=plan_text,
+        visual_examples=examples_data # Pass examples_data
+    )
+    
+    # Convert images to base64 for frontend display
+    # Note: The original code encoded `processed_images` (which was `images[:5]`),
+    # but the requested change encodes all `images`.
+    encoded_images = []
+    for img in images:
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG")
+        encoded_images.append(f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}")
+    
+    return {
+        "filename": file.filename,
+        "locations": locations_json,
+        "images": encoded_images
+    }
+
+@app.post("/upload/cover-page")
+async def upload_cover_page(file: UploadFile = File(...)):
+    content = await file.read()
+    images = await pdf_service.convert_pdf_to_images(content)
+    
+    if not images:
+        raise HTTPException(status_code=400, detail="Could not convert PDF to images")
+    
+    # Process only the first page (cover page)
+    cover_page = images[0]
+    
+    # Skip auto-extraction to speed up upload
+    # symbols_json = await gemini_service.extract_grd_symbols(cover_page)
+    symbols_json = []
+    
+    # Convert image to base64
     import base64
     from io import BytesIO
     
-    encoded_images = []
-    for img in processed_images:
-        buffered = BytesIO()
-        img.save(buffered, format="JPEG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        encoded_images.append(f"data:image/jpeg;base64,{img_str}")
+    buffered = BytesIO()
+    cover_page.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    encoded_image = f"data:image/jpeg;base64,{img_str}"
     
     return {
-        "filename": file.filename, 
-        "locations": locations_json,
-        "images": encoded_images
+        "filename": file.filename,
+        "symbols": symbols_json,
+        "image": encoded_image
     }
 
 if __name__ == "__main__":
