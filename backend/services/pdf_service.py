@@ -17,9 +17,9 @@ class PDFService:
             print(f"Error extracting text: {e}")
             return ""
 
-    async def convert_pdf_to_images(self, file_content: bytes):
+    async def convert_pdf_to_images(self, file_content: bytes, dpi: int = 300):
         try:
-            images = convert_from_bytes(file_content)
+            images = convert_from_bytes(file_content, dpi=dpi)
             return images
         except Exception as e:
             print(f"Error converting PDF to images: {e}")

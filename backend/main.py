@@ -41,7 +41,8 @@ async def upload_schedule(file: UploadFile = File(...)):
     content = await file.read()
     
     # Always convert to images for bounding box extraction and visualization
-    images = await pdf_service.convert_pdf_to_images(content)
+    # Use lower DPI (200) for schedules to improve performance
+    images = await pdf_service.convert_pdf_to_images(content, dpi=200)
     
     # Limit to first 5 pages to avoid hitting payload limits too easily
     # In production, we'd handle this more robustly (e.g., batching)
