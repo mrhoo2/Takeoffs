@@ -63,7 +63,7 @@ export default function UploadStep({ onUploadComplete }: UploadStepProps) {
             </label>
             {uploading && (
                 <p className="mt-6 text-sm text-bv-blue-600 animate-pulse font-medium">
-                    Gemini is analyzing the schedule...
+                    BuildVision is analyzing the schedule...
                 </p>
             )}
         </div>

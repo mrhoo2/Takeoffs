@@ -188,7 +188,7 @@ export default function SymbolExtraction({ onComplete, onSkip }: SymbolExtractio
                 <h2 className="text-2xl font-bold mb-4 text-neutral-900">Visual Examples (Optional)</h2>
                 <p className="text-neutral-600 mb-8">
                     Upload a reference page (e.g., legend, schedule, or plan) and manually select examples of equipment.
-                    Gemini will use these visual examples to improve detection accuracy.
+                    BuildVision will use these visual examples to improve detection accuracy.
                 </p>
 
                 <div className="flex gap-4">

@@ -73,7 +73,7 @@ export default function PlanUpload({ selectedEquipment, scheduleText, visualExam
             </label>
             {uploading && (
                 <p className="mt-6 text-sm text-bv-blue-600 animate-pulse font-medium">
-                    Gemini is scanning the plans for equipment...
+                    BuildVision is scanning the plans for equipment...
                 </p>
             )}
         </div>
