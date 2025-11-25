@@ -6,7 +6,7 @@ import os
 import io
 import base64
 import json
-from services.claude_service import ClaudeService
+from services.gemini_service import GeminiService
 from services.pdf_service import PDFService
 
 app = FastAPI()
@@ -29,7 +29,7 @@ async def global_exception_handler(request, exc):
     )
 
 # Initialize services
-claude_service = ClaudeService()
+gemini_service = GeminiService()
 pdf_service = PDFService()
 
 @app.get("/")
@@ -48,7 +48,7 @@ async def upload_schedule(file: UploadFile = File(...)):
     # In production, we'd handle this more robustly (e.g., batching)
     processed_images = images[:5]
     
-    equipment_json = await claude_service.extract_equipment_types(processed_images)
+    equipment_json = await gemini_service.extract_equipment_types(processed_images)
     
     # Convert images to base64 for frontend display
     import base64
@@ -98,8 +98,8 @@ async def upload_plans(
         except json.JSONDecodeError:
             print("Failed to parse visual examples JSON")
 
-    # Process high-res images with Claude for accurate bounding boxes
-    locations_json = await claude_service.find_equipment_locations(
+    # Process high-res images with Gemini for accurate bounding boxes
+    locations_json = await gemini_service.find_equipment_locations(
         images, 
         equipment, 
         schedule_text=schedule_text, 
@@ -129,7 +129,7 @@ async def upload_cover_page(file: UploadFile = File(...)):
     cover_page = images[0]
     
     # Skip auto-extraction to speed up upload
-    # symbols_json = await claude_service.extract_grd_symbols(cover_page)
+    # symbols_json = await gemini_service.extract_grd_symbols(cover_page)
     symbols_json = []
     
     # Convert image to base64

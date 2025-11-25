@@ -5,6 +5,11 @@ import time
 import asyncio
 from functools import wraps
 from google.api_core import exceptions
+import json
+import re
+import base64
+from PIL import Image
+import io
 
 load_dotenv()
 
@@ -81,15 +86,12 @@ class GeminiService:
         return text
 
     @retry_with_backoff(retries=5, initial_delay=2)
-    @retry_with_backoff(retries=5, initial_delay=2)
     async def find_equipment_locations(self, plan_images, equipment_list, schedule_text=None, plan_text=None, visual_examples=None):
         # If single image, convert to list
         if not isinstance(plan_images, list):
             plan_images = [plan_images]
 
         all_locations = []
-        
-        import json
         
         for page_idx, image in enumerate(plan_images):
             # Check image size - if large, use tiling
@@ -346,10 +348,6 @@ class GeminiService:
 
     def _add_visual_examples(self, content, visual_examples):
         try:
-            import base64
-            from PIL import Image
-            import io
-
             # Decode base64 image
             img_data = base64.b64decode(visual_examples['image'].split(',')[1])
             ref_image = Image.open(io.BytesIO(img_data))
@@ -377,9 +375,6 @@ class GeminiService:
             print(f"Error processing visual examples: {e}")
 
     def _parse_json_response(self, text):
-        import json
-        import re
-        
         try:
             match = re.search(r'\[.*\]', text, re.DOTALL)
             if match:
@@ -408,7 +403,6 @@ class GeminiService:
         response = await self.model.generate_content_async([prompt, image])
         
         # Robust JSON extraction
-        import re
         text = response.text
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
