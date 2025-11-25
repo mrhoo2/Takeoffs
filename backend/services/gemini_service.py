@@ -21,10 +21,16 @@ def retry_with_backoff(retries=3, initial_delay=1):
             for i in range(retries):
                 try:
                     return await func(*args, **kwargs)
-                except (exceptions.ResourceExhausted, exceptions.ServiceUnavailable, exceptions.InternalServerError) as e:
+                except (exceptions.ResourceExhausted, exceptions.ServiceUnavailable, exceptions.InternalServerError, exceptions.DeadlineExceeded) as e:
                     if i == retries - 1:
                         raise e
-                    print(f"Gemini API error: {e}. Retrying in {delay} seconds...")
+                    print(f"Gemini API error: {e}. Retrying in {delay} seconds... (attempt {i+1}/{retries})")
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                except asyncio.TimeoutError as e:
+                    if i == retries - 1:
+                        raise e
+                    print(f"Request timed out. Retrying in {delay} seconds... (attempt {i+1}/{retries})")
                     await asyncio.sleep(delay)
                     delay *= 2
                 except Exception as e:
@@ -44,6 +50,10 @@ class GeminiService:
 
     @retry_with_backoff(retries=5, initial_delay=2)
     async def extract_equipment_types(self, content):
+        print("extract_equipment_types: Starting Gemini API call...")
+        import time
+        start_time = time.time()
+        
         prompt_text = """
         You are an expert mechanical engineer. Analyze the following mechanical schedule and extract a list of equipment types.
         For each equipment type, identify if it is "typical" (multiple instances, usually alphabetical tags like WSHP-A) or "instance-based" (unique instances, usually numeric tags like RTU-1).
@@ -72,8 +82,10 @@ class GeminiService:
                 full_prompt.append(content)
             response = await self.model.generate_content_async(full_prompt)
 
+        elapsed = time.time() - start_time
+        print(f"extract_equipment_types: Gemini API returned after {elapsed:.2f}s")
+        
         # Robust JSON extraction
-        import re
         text = response.text
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
@@ -87,40 +99,58 @@ class GeminiService:
 
     @retry_with_backoff(retries=5, initial_delay=2)
     async def find_equipment_locations(self, plan_images, equipment_list, schedule_text=None, plan_text=None, visual_examples=None):
+        print("find_equipment_locations: Starting...")
+        
         # If single image, convert to list
         if not isinstance(plan_images, list):
             plan_images = [plan_images]
 
+        print(f"find_equipment_locations: Processing {len(plan_images)} images")
         all_locations = []
         
         for page_idx, image in enumerate(plan_images):
-            # Check image size - if large, use tiling
-            width, height = image.size
-            # Threshold for tiling: e.g., > 2000x2000 pixels
-            if width > 2000 or height > 2000:
-                print(f"Image size {width}x{height} exceeds threshold. Using tiling strategy.")
-                page_locations = await self.process_with_tiling(
-                    image, 
-                    equipment_list, 
-                    page_idx + 1,
-                    schedule_text,
-                    plan_text,
-                    visual_examples
-                )
-            else:
-                # Standard processing for smaller images
-                page_locations = await self._process_single_image(
-                    image, 
-                    equipment_list, 
-                    page_idx + 1,
-                    schedule_text,
-                    plan_text,
-                    visual_examples
-                )
-            
-            all_locations.extend(page_locations)
-            
-        return json.dumps(all_locations)
+            try:
+                # Check image size - if large, use tiling
+                width, height = image.size
+                # Threshold for tiling: e.g., > 2000x2000 pixels
+                if width > 2000 or height > 2000:
+                    print(f"Image size {width}x{height} exceeds threshold. Using tiling strategy.")
+                    page_locations = await self.process_with_tiling(
+                        image, 
+                        equipment_list, 
+                        page_idx + 1,
+                        schedule_text,
+                        plan_text,
+                        visual_examples
+                    )
+                else:
+                    # Standard processing for smaller images
+                    page_locations = await self._process_single_image(
+                        image, 
+                        equipment_list, 
+                        page_idx + 1,
+                        schedule_text,
+                        plan_text,
+                        visual_examples
+                    )
+                
+                print(f"find_equipment_locations: Page {page_idx + 1} returned {len(page_locations)} locations")
+                all_locations.extend(page_locations)
+            except Exception as e:
+                print(f"find_equipment_locations: ERROR processing page {page_idx + 1}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with other pages
+        
+        print(f"find_equipment_locations: Total locations: {len(all_locations)}")
+        print(f"find_equipment_locations: Converting to JSON...")
+        try:
+            result = json.dumps(all_locations)
+            print(f"find_equipment_locations: JSON result length: {len(result)}")
+            return result
+        except Exception as e:
+            print(f"find_equipment_locations: ERROR converting to JSON: {e}")
+            return "[]"
 
     async def _process_single_image(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples):
         prompt = f"""
@@ -159,6 +189,7 @@ class GeminiService:
             return []
 
     async def process_with_tiling(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples):
+        print(f"process_with_tiling: Starting for page {page_num}")
         width, height = image.size
         
         # Define tile size and overlap
@@ -202,16 +233,59 @@ class GeminiService:
 
         all_tile_locations = []
         
-        # Semaphore to control concurrency (max 10 requests at a time)
-        semaphore = asyncio.Semaphore(10)
+        # Semaphore to control concurrency (max 3 requests at a time to reduce API load)
+        semaphore = asyncio.Semaphore(3)
         
-        async def process_tile_wrapper(tile):
+        # Per-tile timeout - increased to 180s (3 minutes) to allow for API delays
+        TILE_TIMEOUT = 180  # seconds
+        MAX_RETRIES = 3     # Total attempts per tile
+        
+        async def process_tile_with_retry(tile):
+            """Process a single tile with retry logic"""
             async with semaphore:
-                print(f"Processing tile {tile['index']+1}/{len(tiles)}")
-                return await self._process_single_tile(tile, equipment_list, page_num, visual_examples, width, height)
+                tile_num = tile['index'] + 1
+                
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        if attempt > 0:
+                            print(f"Tile {tile_num}/{len(tiles)}: Retry attempt {attempt + 1}/{MAX_RETRIES}")
+                        else:
+                            print(f"Processing tile {tile_num}/{len(tiles)}")
+                        
+                        # Wrap with timeout to prevent indefinite waiting
+                        result = await asyncio.wait_for(
+                            self._process_single_tile(tile, equipment_list, page_num, visual_examples, width, height),
+                            timeout=TILE_TIMEOUT
+                        )
+                        
+                        # Success - return the result
+                        if result:
+                            print(f"Tile {tile_num}: Found {len(result)} locations")
+                        return result
+                        
+                    except asyncio.TimeoutError:
+                        if attempt < MAX_RETRIES - 1:
+                            # Wait a bit before retrying (exponential backoff)
+                            wait_time = (attempt + 1) * 5  # 5s, 10s
+                            print(f"Tile {tile_num} timed out after {TILE_TIMEOUT}s. Waiting {wait_time}s before retry...")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            print(f"Tile {tile_num} failed after {MAX_RETRIES} attempts, skipping...")
+                            return []
+                    
+                    except Exception as e:
+                        if attempt < MAX_RETRIES - 1:
+                            wait_time = (attempt + 1) * 5
+                            print(f"Tile {tile_num} error: {e}. Waiting {wait_time}s before retry...")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            print(f"Tile {tile_num} failed after {MAX_RETRIES} attempts: {e}")
+                            return []
+                
+                return []  # Should not reach here
 
         # Create tasks for all tiles
-        tasks = [process_tile_wrapper(tile) for tile in tiles]
+        tasks = [process_tile_with_retry(tile) for tile in tiles]
         
         # Run tasks in parallel
         results = await asyncio.gather(*tasks)
@@ -221,7 +295,17 @@ class GeminiService:
             all_tile_locations.extend(res)
                 
         # Merge duplicates (NMS-like)
-        return self._merge_locations(all_tile_locations)
+        print(f"process_with_tiling: Merging {len(all_tile_locations)} locations...")
+        try:
+            merged = await self._merge_locations(all_tile_locations)
+            print(f"process_with_tiling: After merge: {len(merged)} locations")
+            return merged
+        except Exception as e:
+            print(f"process_with_tiling: ERROR during merge: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return unmerged locations if merge fails
+            return all_tile_locations
 
     async def _process_single_tile(self, tile, equipment_list, page_num, visual_examples, full_width, full_height):
         prompt = f"""
@@ -311,19 +395,26 @@ class GeminiService:
             
         return intersection_area / union_area
 
-    def _merge_locations(self, locations):
+    async def _merge_locations(self, locations):
         if not locations:
             return []
             
+        print(f"_merge_locations: Starting merge of {len(locations)} locations")
+        
         # Filter out low confidence (redundant check but safe)
         filtered_locations = [loc for loc in locations if loc.get('confidence', 0) >= 0.6]
+        print(f"_merge_locations: {len(filtered_locations)} locations after confidence filter")
         
         # Sort by confidence descending
         sorted_locs = sorted(filtered_locations, key=lambda x: x.get('confidence', 0), reverse=True)
         
         merged = []
         
-        for loc in sorted_locs:
+        for i, loc in enumerate(sorted_locs):
+            # Yield control periodically to prevent blocking the event loop
+            if i % 10 == 0:
+                await asyncio.sleep(0)  # Allow other tasks to run
+                
             is_duplicate = False
             
             for kept in merged:
@@ -343,7 +434,8 @@ class GeminiService:
             
             if not is_duplicate:
                 merged.append(loc)
-                
+        
+        print(f"_merge_locations: Merge complete, {len(merged)} unique locations")
         return merged
 
     def _add_visual_examples(self, content, visual_examples):

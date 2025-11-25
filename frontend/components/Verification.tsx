@@ -1,20 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
 import dynamic from 'next/dynamic';
 
-// Dynamically import react-pdf components to avoid SSR issues
-const Document = dynamic(() => import('react-pdf').then(mod => mod.Document), {
+// Dynamically import the SVG viewer to avoid SSR issues
+const SvgPageViewer = dynamic(() => import('./PdfSvgViewer'), {
     ssr: false,
-    loading: () => <div className="h-96 flex items-center justify-center text-neutral-400">Loading PDF viewer...</div>
+    loading: () => <div className="h-96 flex items-center justify-center text-neutral-400">Loading viewer...</div>
 });
-
-const Page = dynamic(() => import('react-pdf').then(mod => mod.Page), {
-    ssr: false,
-});
-
-// We need to set the worker source after the dynamic import
-// This will be done in useEffect to ensure client-side execution
 
 interface Location {
     type: string;
@@ -26,9 +19,17 @@ interface Location {
     page?: number;
 }
 
+interface PageInfo {
+    width: number;
+    height: number;
+}
+
 interface VerificationProps {
     planData: {
-        pdf?: string; // Base64 encoded PDF
+        pdfId?: string; // PDF ID for fetching SVG pages on-demand
+        pageInfo?: PageInfo[]; // Page dimensions
+        svgPages?: { svg: string; width: number; height: number }[]; // Legacy direct SVG
+        pdf?: string; // Legacy: Base64 encoded PDF
         images?: string[]; // Fallback for backward compatibility
         locations: string | Location[];
         pageCount?: number;
@@ -36,35 +37,145 @@ interface VerificationProps {
     onReset: () => void;
 }
 
+// Memoized bounding box component to prevent re-renders
+const BoundingBox = memo(function BoundingBox({
+    loc,
+    globalIndex,
+    isSelected,
+    status,
+    svgW,
+    svgH,
+    zoom,
+    onSelect,
+}: {
+    loc: Location;
+    globalIndex: number;
+    isSelected: boolean;
+    status?: 'correct' | 'incorrect' | 'duplicate';
+    svgW: number;
+    svgH: number;
+    zoom: number;
+    onSelect: (index: number) => void;
+}) {
+    if (status === 'incorrect' || !loc.bbox) return null;
+
+    const style: React.CSSProperties = {
+        position: 'absolute',
+        top: (loc.bbox[0] / 1000) * svgH,
+        left: (loc.bbox[1] / 1000) * svgW,
+        height: ((loc.bbox[2] - loc.bbox[0]) / 1000) * svgH,
+        width: ((loc.bbox[3] - loc.bbox[1]) / 1000) * svgW,
+        // Use contain to isolate this element's layout/paint
+        contain: 'layout style',
+    };
+
+    return (
+        <div
+            onClick={(e) => { e.stopPropagation(); onSelect(globalIndex); }}
+            className={`cursor-pointer ${
+                isSelected ? 'border-2 border-bv-blue-600 bg-bv-blue-500/40 z-20' :
+                status === 'correct' ? 'border-2 border-green-500 bg-green-500/20' :
+                status === 'duplicate' ? 'border-2 border-yellow-500 bg-yellow-500/20' :
+                'border border-bv-blue-400 bg-bv-blue-500/10 hover:bg-bv-blue-500/20'
+            }`}
+            style={style}
+        >
+            {isSelected && (
+                <div 
+                    className="absolute bg-bv-blue-600 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap z-30" 
+                    style={{ 
+                        top: -24,
+                        left: 0,
+                        transform: `scale(${1 / zoom})`, 
+                        transformOrigin: 'bottom left' 
+                    }}
+                >
+                    {loc.tag}
+                </div>
+            )}
+        </div>
+    );
+});
+
+// Memoized equipment list item
+const EquipmentListItem = memo(function EquipmentListItem({
+    loc,
+    globalIndex,
+    isSelected,
+    status,
+    onSelect,
+}: {
+    loc: Location;
+    globalIndex: number;
+    isSelected: boolean;
+    status?: 'correct' | 'incorrect' | 'duplicate';
+    onSelect: (index: number) => void;
+}) {
+    return (
+        <button
+            onClick={() => onSelect(globalIndex)}
+            className={`w-full px-4 py-3 text-left flex items-center gap-3 ${
+                isSelected 
+                    ? 'bg-bv-blue-50 border-l-4 border-l-bv-blue-600' 
+                    : 'hover:bg-neutral-50 border-l-4 border-l-transparent'
+            }`}
+        >
+            {/* Status indicator */}
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0 ${
+                status === 'correct' ? 'bg-green-100 text-green-700' :
+                status === 'incorrect' ? 'bg-red-100 text-red-700' :
+                status === 'duplicate' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-neutral-100 text-neutral-400'
+            }`}>
+                {status === 'correct' ? '✓' :
+                 status === 'incorrect' ? '✕' :
+                 status === 'duplicate' ? '!' : '?'}
+            </div>
+            
+            {/* Equipment info */}
+            <div className="flex-1 min-w-0">
+                <div className={`font-medium truncate ${isSelected ? 'text-bv-blue-700' : 'text-neutral-900'}`}>
+                    {loc.tag}
+                </div>
+                <div className="text-xs text-neutral-400 truncate">
+                    {loc.type} • {(loc.confidence * 100).toFixed(0)}%
+                </div>
+            </div>
+
+            {/* Arrow indicator */}
+            <span className={`text-neutral-300 ${isSelected ? 'text-bv-blue-400' : ''}`}>
+                →
+            </span>
+        </button>
+    );
+});
+
 export default function Verification({ planData, onReset }: VerificationProps) {
-    const [pdfWorkerReady, setPdfWorkerReady] = useState(false);
-    
-    // Configure PDF.js worker on client side only
-    useEffect(() => {
-        const setupWorker = async () => {
-            const pdfjs = await import('react-pdf').then(mod => mod.pdfjs);
-            pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-            setPdfWorkerReady(true);
-        };
-        setupWorker();
-    }, []);
+    // Parse locations once with useMemo
+    const locations = useMemo(() => {
+        try {
+            const potentialLocations = typeof planData.locations === 'string'
+                ? JSON.parse(planData.locations)
+                : planData.locations;
 
-    let locations: Location[] = [];
-    try {
-        const potentialLocations = typeof planData.locations === 'string'
-            ? JSON.parse(planData.locations)
-            : planData.locations;
-
-        if (Array.isArray(potentialLocations)) {
-            locations = potentialLocations;
-        } else {
-            console.error("Parsed locations is not an array:", potentialLocations);
-            locations = [];
+            if (Array.isArray(potentialLocations)) {
+                return potentialLocations as Location[];
+            } else {
+                console.error("Parsed locations is not an array:", potentialLocations);
+                return [];
+            }
+        } catch (e) {
+            console.error("Failed to parse locations:", e);
+            return [];
         }
-    } catch (e) {
-        console.error("Failed to parse locations:", e);
-        locations = [];
-    }
+    }, [planData.locations]);
+
+    // Pre-compute location to index map to avoid O(n) indexOf calls
+    const locationIndexMap = useMemo(() => {
+        const map = new Map<Location, number>();
+        locations.forEach((loc, index) => map.set(loc, index));
+        return map;
+    }, [locations]);
 
     const [currentPage, setCurrentPage] = useState(1);
     const [zoom, setZoom] = useState(1);
@@ -78,13 +189,88 @@ export default function Verification({ planData, onReset }: VerificationProps) {
     const [pageHeight, setPageHeight] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    const totalPages = planData.pageCount || (planData.images?.length) || 1;
-    
-    // Convert base64 PDF to data URL
-    const pdfDataUrl = planData.pdf ? `data:application/pdf;base64,${planData.pdf}` : null;
+    const [svgContent, setSvgContent] = useState<string | null>(null);
+    const [svgLoading, setSvgLoading] = useState(false);
 
-    // Filter locations for current page
-    const currentLocations = locations.filter(loc => (loc.page || 1) === currentPage);
+    const totalPages = planData.pageCount || planData.pageInfo?.length || planData.svgPages?.length || (planData.images?.length) || 1;
+    
+    // Get current page dimensions
+    const currentPageInfo = planData.pageInfo?.[currentPage - 1] || planData.svgPages?.[currentPage - 1];
+    
+    // Fetch SVG content when page changes
+    useEffect(() => {
+        const fetchSvg = async () => {
+            if (planData.pdfId) {
+                setSvgLoading(true);
+                setSvgContent(null);
+                try {
+                    const response = await fetch(`http://localhost:8000/pdf/${planData.pdfId}/page/${currentPage}/svg`);
+                    if (response.ok) {
+                        const svg = await response.text();
+                        setSvgContent(svg);
+                        
+                        // Update dimensions from headers if available
+                        const width = response.headers.get('X-Page-Width');
+                        const height = response.headers.get('X-Page-Height');
+                        if (width && height) {
+                            setPageWidth(parseFloat(width));
+                            setPageHeight(parseFloat(height));
+                        }
+                    } else {
+                        console.error('Failed to fetch SVG page');
+                    }
+                } catch (error) {
+                    console.error('Error fetching SVG:', error);
+                } finally {
+                    setSvgLoading(false);
+                }
+            } else if (planData.svgPages?.[currentPage - 1]) {
+                // Legacy: use embedded SVG data
+                setSvgContent(planData.svgPages[currentPage - 1].svg);
+                setPageWidth(planData.svgPages[currentPage - 1].width);
+                setPageHeight(planData.svgPages[currentPage - 1].height);
+            }
+        };
+        
+        fetchSvg();
+    }, [planData.pdfId, planData.svgPages, currentPage]);
+
+    // Filter locations for current page - memoized to prevent recalculation
+    const currentLocations = useMemo(() => {
+        return locations.filter(loc => (loc.page || 1) === currentPage);
+    }, [locations, currentPage]);
+
+    // Memoized handler for selecting equipment
+    const handleSelectEquipmentCallback = useCallback((globalIndex: number) => {
+        const loc = locations[globalIndex];
+        if (!loc) return;
+
+        // Navigate to the correct page if needed
+        const targetPage = loc.page || 1;
+        if (targetPage !== currentPage) {
+            setCurrentPage(targetPage);
+        }
+
+        setSelectedIndex(globalIndex);
+
+        // Pan to the location if it has a bounding box
+        if (loc.bbox && containerRef.current && pageWidth > 0 && pageHeight > 0) {
+            const boxCenterX = ((loc.bbox[1] + loc.bbox[3]) / 2 / 1000) * pageWidth * zoom;
+            const boxCenterY = ((loc.bbox[0] + loc.bbox[2]) / 2 / 1000) * pageHeight * zoom;
+            const containerWidth = containerRef.current.clientWidth;
+            const containerHeight = containerRef.current.clientHeight;
+            const scrollLeft = boxCenterX - containerWidth / 2;
+            const scrollTop = boxCenterY - containerHeight / 2;
+
+            setTimeout(() => {
+                containerRef.current?.scrollTo({
+                    left: Math.max(0, scrollLeft),
+                    top: Math.max(0, scrollTop),
+                    behavior: 'smooth'
+                });
+            }, targetPage !== currentPage ? 100 : 0);
+        }
+    }, [locations, currentPage, pageWidth, pageHeight, zoom]);
 
     const handleReview = (status: 'correct' | 'incorrect' | 'duplicate') => {
         if (selectedIndex === null) return;
@@ -159,49 +345,10 @@ export default function Verification({ planData, onReset }: VerificationProps) {
 
     const selectedLocation = selectedIndex !== null ? locations[selectedIndex] : null;
 
-    const onPageLoadSuccess = (page: any) => {
-        const { width, height } = page;
-        setPageWidth(width);
-        setPageHeight(height);
-    };
-
-    // Function to select equipment and pan to its location
-    const handleSelectEquipment = (globalIndex: number) => {
-        const loc = locations[globalIndex];
-        if (!loc) return;
-
-        // Navigate to the correct page if needed
-        const targetPage = loc.page || 1;
-        if (targetPage !== currentPage) {
-            setCurrentPage(targetPage);
-        }
-
-        setSelectedIndex(globalIndex);
-
-        // Pan to the location if it has a bounding box
-        if (loc.bbox && containerRef.current && pageWidth > 0 && pageHeight > 0) {
-            // Calculate the center of the bounding box in pixels (accounting for zoom)
-            const boxCenterX = ((loc.bbox[1] + loc.bbox[3]) / 2 / 1000) * pageWidth * zoom;
-            const boxCenterY = ((loc.bbox[0] + loc.bbox[2]) / 2 / 1000) * pageHeight * zoom;
-
-            // Get container dimensions
-            const containerWidth = containerRef.current.clientWidth;
-            const containerHeight = containerRef.current.clientHeight;
-
-            // Calculate scroll position to center the box in the viewport
-            const scrollLeft = boxCenterX - containerWidth / 2;
-            const scrollTop = boxCenterY - containerHeight / 2;
-
-            // Use setTimeout to allow page change to render first
-            setTimeout(() => {
-                containerRef.current?.scrollTo({
-                    left: Math.max(0, scrollLeft),
-                    top: Math.max(0, scrollTop),
-                    behavior: 'smooth'
-                });
-            }, targetPage !== currentPage ? 100 : 0);
-        }
-    };
+    const onPageLoadSuccess = useCallback((dimensions: { width: number; height: number }) => {
+        setPageWidth(dimensions.width);
+        setPageHeight(dimensions.height);
+    }, []);
 
     return (
         <div className="w-full max-w-[1600px] mx-auto h-screen flex flex-col p-4">
@@ -227,79 +374,50 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                 <div className="flex-1 relative border border-neutral-200 rounded-xl overflow-hidden bg-neutral-100 shadow-inner flex flex-col">
                     <div ref={containerRef} className="flex-1 overflow-auto relative" style={{ cursor: manualMode ? 'crosshair' : 'grab' }}>
                         <div
-                            className="relative origin-top-left transition-transform duration-200 ease-out inline-block"
-                            style={{ transform: `scale(${zoom})` }}
+                            className="relative origin-top-left inline-block"
+                            style={{ 
+                                transform: `scale(${zoom})`,
+                                // GPU acceleration for smooth zooming
+                                willChange: 'transform',
+                                backfaceVisibility: 'hidden',
+                            }}
                         >
-                            {pdfDataUrl && pdfWorkerReady ? (
+                            {svgLoading ? (
+                                <div className="h-96 flex items-center justify-center text-neutral-400">Loading page...</div>
+                            ) : svgContent && currentPageInfo ? (
                                 <div className="relative">
-                                    <Document
-                                        file={pdfDataUrl}
-                                        onLoadError={(error: Error) => console.error('Error loading PDF:', error)}
-                                    >
-                                        <Page
-                                            pageNumber={currentPage}
-                                            onLoadSuccess={onPageLoadSuccess}
-                                            renderTextLayer={false}
-                                            renderAnnotationLayer={false}
-                                            // @ts-expect-error - react-pdf types may not include svg mode
-                                            renderMode="svg"
-                                        />
-                                    </Document>
+                                    <SvgPageViewer
+                                        svgContent={svgContent}
+                                        width={currentPageInfo.width}
+                                        height={currentPageInfo.height}
+                                        onLoad={onPageLoadSuccess}
+                                    />
                                     
                                     {/* Overlay for bounding boxes and drawing */}
-                                    {pageWidth > 0 && (
+                                    {currentPageInfo.width > 0 && (
                                         <div
                                             className="absolute top-0 left-0"
-                                            style={{ width: pageWidth, height: pageHeight }}
+                                            style={{ width: currentPageInfo.width, height: currentPageInfo.height }}
                                             onMouseDown={handleOverlayClick}
                                             onMouseMove={handleOverlayMove}
                                             onMouseUp={handleOverlayUp}
                                             onMouseLeave={handleOverlayUp}
                                         >
-                                            {/* Existing Locations */}
-                                            {currentLocations.map((loc, index) => {
-                                                const globalIndex = locations.indexOf(loc);
-                                                const status = reviewStatus[globalIndex];
-                                                const isSelected = globalIndex === selectedIndex;
-
-                                                if (status === 'incorrect') return null;
-                                                if (!loc.bbox) return null;
-
-                                                // Convert 0-1000 scale to pixel coordinates
-                                                const style: React.CSSProperties = {
-                                                    position: 'absolute',
-                                                    top: (loc.bbox[0] / 1000) * pageHeight,
-                                                    left: (loc.bbox[1] / 1000) * pageWidth,
-                                                    height: ((loc.bbox[2] - loc.bbox[0]) / 1000) * pageHeight,
-                                                    width: ((loc.bbox[3] - loc.bbox[1]) / 1000) * pageWidth,
-                                                };
-
+                                            {/* Existing Locations - using memoized BoundingBox component */}
+                                            {currentLocations.map((loc) => {
+                                                const globalIndex = locationIndexMap.get(loc) ?? -1;
                                                 return (
-                                                    <div
+                                                    <BoundingBox
                                                         key={globalIndex}
-                                                        onClick={(e) => { e.stopPropagation(); setSelectedIndex(globalIndex); }}
-                                                        className={`cursor-pointer transition-all duration-200 ${
-                                                            isSelected ? 'border-2 border-bv-blue-600 bg-bv-blue-500/40 z-20' :
-                                                            status === 'correct' ? 'border-2 border-green-500 bg-green-500/20' :
-                                                            status === 'duplicate' ? 'border-2 border-yellow-500 bg-yellow-500/20' :
-                                                            'border border-bv-blue-400 bg-bv-blue-500/10 hover:bg-bv-blue-500/20'
-                                                        }`}
-                                                        style={style}
-                                                    >
-                                                        {isSelected && (
-                                                            <div 
-                                                                className="absolute bg-bv-blue-600 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap z-30" 
-                                                                style={{ 
-                                                                    top: -24,
-                                                                    left: 0,
-                                                                    transform: `scale(${1 / zoom})`, 
-                                                                    transformOrigin: 'bottom left' 
-                                                                }}
-                                                            >
-                                                                {loc.tag}
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                                        loc={loc}
+                                                        globalIndex={globalIndex}
+                                                        isSelected={globalIndex === selectedIndex}
+                                                        status={reviewStatus[globalIndex]}
+                                                        svgW={currentPageInfo?.width || pageWidth}
+                                                        svgH={currentPageInfo?.height || pageHeight}
+                                                        zoom={zoom}
+                                                        onSelect={setSelectedIndex}
+                                                    />
                                                 );
                                             })}
 
@@ -308,18 +426,16 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                                                 <div
                                                     className="absolute border-2 border-bv-blue-600 bg-bv-blue-500/30 z-50 pointer-events-none"
                                                     style={{
-                                                        top: (Math.min(drawStart.y, drawCurrent.y) / 1000) * pageHeight,
-                                                        left: (Math.min(drawStart.x, drawCurrent.x) / 1000) * pageWidth,
-                                                        height: (Math.abs(drawCurrent.y - drawStart.y) / 1000) * pageHeight,
-                                                        width: (Math.abs(drawCurrent.x - drawStart.x) / 1000) * pageWidth,
+                                                        top: (Math.min(drawStart.y, drawCurrent.y) / 1000) * (currentPageInfo?.height || pageHeight),
+                                                        left: (Math.min(drawStart.x, drawCurrent.x) / 1000) * (currentPageInfo?.width || pageWidth),
+                                                        height: (Math.abs(drawCurrent.y - drawStart.y) / 1000) * (currentPageInfo?.height || pageHeight),
+                                                        width: (Math.abs(drawCurrent.x - drawStart.x) / 1000) * (currentPageInfo?.width || pageWidth),
                                                     }}
                                                 />
                                             )}
                                         </div>
                                     )}
                                 </div>
-                            ) : pdfDataUrl && !pdfWorkerReady ? (
-                                <div className="h-96 flex items-center justify-center text-neutral-400">Loading PDF viewer...</div>
                             ) : planData.images?.[currentPage - 1] ? (
                                 // Fallback to image display for backward compatibility
                                 <img 
@@ -363,52 +479,21 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                         <p className="text-xs text-neutral-500 mt-1">{currentLocations.length} item{currentLocations.length !== 1 ? 's' : ''} found</p>
                     </div>
 
-                    {/* Equipment List */}
+                    {/* Equipment List - using memoized EquipmentListItem component */}
                     <div className="flex-1 overflow-y-auto min-h-0">
                         {currentLocations.length > 0 ? (
                             <div className="divide-y divide-neutral-100">
                                 {currentLocations.map((loc) => {
-                                    const globalIndex = locations.indexOf(loc);
-                                    const status = reviewStatus[globalIndex];
-                                    const isSelected = globalIndex === selectedIndex;
-
+                                    const globalIndex = locationIndexMap.get(loc) ?? -1;
                                     return (
-                                        <button
+                                        <EquipmentListItem
                                             key={globalIndex}
-                                            onClick={() => handleSelectEquipment(globalIndex)}
-                                            className={`w-full px-4 py-3 text-left transition-colors flex items-center gap-3 ${
-                                                isSelected 
-                                                    ? 'bg-bv-blue-50 border-l-4 border-l-bv-blue-600' 
-                                                    : 'hover:bg-neutral-50 border-l-4 border-l-transparent'
-                                            }`}
-                                        >
-                                            {/* Status indicator */}
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0 ${
-                                                status === 'correct' ? 'bg-green-100 text-green-700' :
-                                                status === 'incorrect' ? 'bg-red-100 text-red-700' :
-                                                status === 'duplicate' ? 'bg-yellow-100 text-yellow-700' :
-                                                'bg-neutral-100 text-neutral-400'
-                                            }`}>
-                                                {status === 'correct' ? '✓' :
-                                                 status === 'incorrect' ? '✕' :
-                                                 status === 'duplicate' ? '!' : '?'}
-                                            </div>
-                                            
-                                            {/* Equipment info */}
-                                            <div className="flex-1 min-w-0">
-                                                <div className={`font-medium truncate ${isSelected ? 'text-bv-blue-700' : 'text-neutral-900'}`}>
-                                                    {loc.tag}
-                                                </div>
-                                                <div className="text-xs text-neutral-400 truncate">
-                                                    {loc.type} • {(loc.confidence * 100).toFixed(0)}%
-                                                </div>
-                                            </div>
-
-                                            {/* Arrow indicator */}
-                                            <span className={`text-neutral-300 ${isSelected ? 'text-bv-blue-400' : ''}`}>
-                                                →
-                                            </span>
-                                        </button>
+                                            loc={loc}
+                                            globalIndex={globalIndex}
+                                            isSelected={globalIndex === selectedIndex}
+                                            status={reviewStatus[globalIndex]}
+                                            onSelect={handleSelectEquipmentCallback}
+                                        />
                                     );
                                 })}
                             </div>
