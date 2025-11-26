@@ -1,0 +1,19 @@
+# Web Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# PDF Processing
+pypdf==5.1.0
+pdf2image==1.17.0
+PyMuPDF==1.24.14
+
+# AI/ML
+google-generativeai==0.8.3
+google-api-core==2.23.0
+
+# Image Processing
+Pillow==11.0.0
+
+# Utilities
+python-dotenv==1.0.1
