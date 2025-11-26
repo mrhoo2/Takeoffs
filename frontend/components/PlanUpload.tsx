@@ -40,7 +40,8 @@ export default function PlanUpload({ selectedEquipment, scheduleText, visualExam
                 
                 setProgressMessage("Starting upload...");
                 
-                const response = await fetch("http://localhost:8000/upload/plans", {
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                const response = await fetch(`${apiUrl}/upload/plans`, {
                     method: "POST",
                     body: formData,
                     signal: controller.signal,

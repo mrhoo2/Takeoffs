@@ -41,7 +41,8 @@ export default function SymbolExtraction({ onComplete, onSkip }: SymbolExtractio
             formData.append("file", e.target.files[0]);
 
             try {
-                const response = await fetch("http://localhost:8000/upload/cover-page", {
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                const response = await fetch(`${apiUrl}/upload/cover-page`, {
                     method: "POST",
                     body: formData,
                 });

@@ -62,7 +62,13 @@ pdf_storage: dict[str, bytes] = {}
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:3001",
+        "https://bv-takeoffs.onrender.com",  # Backend URL
+        "https://*.vercel.app",  # Vercel preview deployments
+        "https://bvtakeoffs.vercel.app",  # Production Vercel domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

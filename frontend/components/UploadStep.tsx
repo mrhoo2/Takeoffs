@@ -27,7 +27,8 @@ export default function UploadStep({ onUploadComplete }: UploadStepProps) {
                 console.log("Starting upload to /upload/schedule (SSE)...");
                 setProgressMessage("Starting upload...");
                 
-                const response = await fetch("http://localhost:8000/upload/schedule", {
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                const response = await fetch(`${apiUrl}/upload/schedule`, {
                     method: "POST",
                     body: formData,
                     signal: controller.signal,
@@ -138,7 +139,7 @@ export default function UploadStep({ onUploadComplete }: UploadStepProps) {
                     if (finalResult.scheduleId && !finalResult.images) {
                         setProgressMessage("Fetching images...");
                         try {
-                            const imagesResponse = await fetch(`http://localhost:8000/schedule/${finalResult.scheduleId}/images`);
+                            const imagesResponse = await fetch(`${apiUrl}/schedule/${finalResult.scheduleId}/images`);
                             if (imagesResponse.ok) {
                                 const imagesData = await imagesResponse.json();
                                 finalResult.images = imagesData.images;

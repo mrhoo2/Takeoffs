@@ -204,7 +204,8 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                 setSvgLoading(true);
                 setSvgContent(null);
                 try {
-                    const response = await fetch(`http://localhost:8000/pdf/${planData.pdfId}/page/${currentPage}/svg`);
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                    const response = await fetch(`${apiUrl}/pdf/${planData.pdfId}/page/${currentPage}/svg`);
                     if (response.ok) {
                         const svg = await response.text();
                         setSvgContent(svg);
