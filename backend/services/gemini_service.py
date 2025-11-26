@@ -233,8 +233,8 @@ class GeminiService:
 
         all_tile_locations = []
         
-        # Semaphore to control concurrency (max 3 requests at a time to reduce API load)
-        semaphore = asyncio.Semaphore(3)
+        # Semaphore to control concurrency (max 10 requests at a time to reduce API load)
+        semaphore = asyncio.Semaphore(10)
         
         # Per-tile timeout - increased to 180s (3 minutes) to allow for API delays
         TILE_TIMEOUT = 180  # seconds
