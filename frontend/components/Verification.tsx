@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback, memo } from "react";
 import dynamic from 'next/dynamic';
+import { SniperDot } from './SniperDot';
 
 // Dynamically import the SVG viewer to avoid SSR issues
 const SvgPageViewer = dynamic(() => import('./PdfSvgViewer'), {
@@ -37,15 +38,22 @@ interface VerificationProps {
     onReset: () => void;
 }
 
-// Memoized bounding box component to prevent re-renders
-const BoundingBox = memo(function BoundingBox({
+// Helper function to map review status to sniper dot status
+const mapToSniperStatus = (reviewStatus?: 'correct' | 'incorrect' | 'duplicate'): 'pending' | 'confirmed' | 'declined' | 'duplicate' => {
+    if (!reviewStatus) return 'pending';
+    if (reviewStatus === 'correct') return 'confirmed';
+    if (reviewStatus === 'incorrect') return 'declined';
+    return 'duplicate';
+};
+
+// Memoized sniper dot wrapper component
+const SniperDotWrapper = memo(function SniperDotWrapper({
     loc,
     globalIndex,
     isSelected,
     status,
     svgW,
     svgH,
-    zoom,
     onSelect,
 }: {
     loc: Location;
@@ -54,40 +62,32 @@ const BoundingBox = memo(function BoundingBox({
     status?: 'correct' | 'incorrect' | 'duplicate';
     svgW: number;
     svgH: number;
-    zoom: number;
     onSelect: (index: number) => void;
 }) {
-    if (status === 'incorrect' || !loc.bbox) return null;
+    if (!loc.bbox) return null;
 
-    const style: React.CSSProperties = {
-        position: 'absolute',
-        top: (loc.bbox[0] / 1000) * svgH,
-        left: (loc.bbox[1] / 1000) * svgW,
-        height: ((loc.bbox[2] - loc.bbox[0]) / 1000) * svgH,
-        width: ((loc.bbox[3] - loc.bbox[1]) / 1000) * svgW,
-        // Use contain to isolate this element's layout/paint
-        contain: 'layout style',
-    };
+    // Calculate center point from bbox
+    const centerX = ((loc.bbox[1] + loc.bbox[3]) / 2 / 1000) * svgW;
+    const centerY = ((loc.bbox[0] + loc.bbox[2]) / 2 / 1000) * svgH;
+    
+    const sniperStatus = mapToSniperStatus(status);
 
     return (
-        <div
-            onClick={(e) => { e.stopPropagation(); onSelect(globalIndex); }}
-            className={`cursor-pointer ${
-                isSelected ? 'border-2 border-bv-blue-600 bg-bv-blue-500/40 z-20' :
-                status === 'correct' ? 'border-2 border-green-500 bg-green-500/20' :
-                status === 'duplicate' ? 'border-2 border-yellow-500 bg-yellow-500/20' :
-                'border border-bv-blue-400 bg-bv-blue-500/10 hover:bg-bv-blue-500/20'
-            }`}
-            style={style}
-        >
+        <div onClick={(e) => { e.stopPropagation(); onSelect(globalIndex); }}>
+            <SniperDot
+                x={centerX}
+                y={centerY}
+                isActive={isSelected}
+                status={sniperStatus}
+            />
+            {/* Label for selected item */}
             {isSelected && (
                 <div 
-                    className="absolute bg-bv-blue-600 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap z-30" 
+                    className="absolute bg-bv-blue-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-[110]" 
                     style={{ 
-                        top: -24,
-                        left: 0,
-                        transform: `scale(${1 / zoom})`, 
-                        transformOrigin: 'bottom left' 
+                        left: centerX,
+                        top: centerY - 30,
+                        transform: 'translateX(-50%)',
                     }}
                 >
                     {loc.tag}
@@ -181,9 +181,6 @@ export default function Verification({ planData, onReset }: VerificationProps) {
     const [zoom, setZoom] = useState(1);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
     const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate'>>({});
-    const [isDrawing, setIsDrawing] = useState(false);
-    const [drawStart, setDrawStart] = useState<{ x: number, y: number } | null>(null);
-    const [drawCurrent, setDrawCurrent] = useState<{ x: number, y: number } | null>(null);
     const [manualMode, setManualMode] = useState(false);
     const [pageWidth, setPageWidth] = useState(0);
     const [pageHeight, setPageHeight] = useState(0);
@@ -293,6 +290,7 @@ export default function Verification({ planData, onReset }: VerificationProps) {
         }
     };
 
+    // Click-to-add handler for manual mode
     const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!manualMode) return;
         
@@ -300,47 +298,21 @@ export default function Verification({ planData, onReset }: VerificationProps) {
         const x = (e.clientX - rect.left) / rect.width * 1000;
         const y = (e.clientY - rect.top) / rect.height * 1000;
         
-        if (!isDrawing) {
-            setIsDrawing(true);
-            setDrawStart({ x, y });
-            setDrawCurrent({ x, y });
+        // Prompt for equipment tag
+        const tag = prompt("Enter equipment tag (e.g., WSHP-1):");
+        if (tag) {
+            // Create a small bbox around the clicked point (±5 units)
+            const newLoc: Location = {
+                type: "Manual Entry",
+                tag: tag,
+                bbox: [y - 5, x - 5, y + 5, x + 5],
+                confidence: 1.0,
+                page: currentPage
+            };
+            locations.push(newLoc);
+            setSelectedIndex(locations.length - 1);
+            // Don't auto-mark as correct - let user review it
         }
-    };
-
-    const handleOverlayMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isDrawing || !manualMode) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width * 1000;
-        const y = (e.clientY - rect.top) / rect.height * 1000;
-        setDrawCurrent({ x, y });
-    };
-
-    const handleOverlayUp = () => {
-        if (!isDrawing || !manualMode || !drawStart || !drawCurrent) return;
-        setIsDrawing(false);
-
-        const ymin = Math.min(drawStart.y, drawCurrent.y);
-        const xmin = Math.min(drawStart.x, drawCurrent.x);
-        const ymax = Math.max(drawStart.y, drawCurrent.y);
-        const xmax = Math.max(drawStart.x, drawCurrent.x);
-
-        if (xmax - xmin > 10 && ymax - ymin > 10) {
-            const tag = prompt("Enter equipment tag (e.g., WSHP-1):");
-            if (tag) {
-                const newLoc: Location = {
-                    type: "Manual Entry",
-                    tag: tag,
-                    bbox: [ymin, xmin, ymax, xmax],
-                    confidence: 1.0,
-                    page: currentPage
-                };
-                locations.push(newLoc);
-                setSelectedIndex(locations.length - 1);
-                setReviewStatus(prev => ({ ...prev, [locations.length - 1]: 'correct' }));
-            }
-        }
-        setDrawStart(null);
-        setDrawCurrent(null);
         setManualMode(false);
     };
 
@@ -394,21 +366,18 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                                         onLoad={onPageLoadSuccess}
                                     />
                                     
-                                    {/* Overlay for bounding boxes and drawing */}
+                                    {/* Overlay for sniper dots */}
                                     {currentPageInfo.width > 0 && (
                                         <div
                                             className="absolute top-0 left-0"
                                             style={{ width: currentPageInfo.width, height: currentPageInfo.height }}
-                                            onMouseDown={handleOverlayClick}
-                                            onMouseMove={handleOverlayMove}
-                                            onMouseUp={handleOverlayUp}
-                                            onMouseLeave={handleOverlayUp}
+                                            onClick={handleOverlayClick}
                                         >
-                                            {/* Existing Locations - using memoized BoundingBox component */}
+                                            {/* Existing Locations - using memoized SniperDotWrapper component */}
                                             {currentLocations.map((loc) => {
                                                 const globalIndex = locationIndexMap.get(loc) ?? -1;
                                                 return (
-                                                    <BoundingBox
+                                                    <SniperDotWrapper
                                                         key={globalIndex}
                                                         loc={loc}
                                                         globalIndex={globalIndex}
@@ -416,24 +385,10 @@ export default function Verification({ planData, onReset }: VerificationProps) {
                                                         status={reviewStatus[globalIndex]}
                                                         svgW={currentPageInfo?.width || pageWidth}
                                                         svgH={currentPageInfo?.height || pageHeight}
-                                                        zoom={zoom}
                                                         onSelect={setSelectedIndex}
                                                     />
                                                 );
                                             })}
-
-                                            {/* Drawing Box */}
-                                            {isDrawing && drawStart && drawCurrent && (
-                                                <div
-                                                    className="absolute border-2 border-bv-blue-600 bg-bv-blue-500/30 z-50 pointer-events-none"
-                                                    style={{
-                                                        top: (Math.min(drawStart.y, drawCurrent.y) / 1000) * (currentPageInfo?.height || pageHeight),
-                                                        left: (Math.min(drawStart.x, drawCurrent.x) / 1000) * (currentPageInfo?.width || pageWidth),
-                                                        height: (Math.abs(drawCurrent.y - drawStart.y) / 1000) * (currentPageInfo?.height || pageHeight),
-                                                        width: (Math.abs(drawCurrent.x - drawStart.x) / 1000) * (currentPageInfo?.width || pageWidth),
-                                                    }}
-                                                />
-                                            )}
                                         </div>
                                     )}
                                 </div>

@@ -48,7 +48,7 @@ export default function Home() {
       <div className="max-w-6xl mx-auto">
         <header className="mb-12 border-b border-neutral-200 pb-6 flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold text-neutral-900 tracking-tight">Construction Drawing Processor</h1>
+            <h1 className="text-3xl font-bold text-neutral-900 tracking-tight">Mechanical Takeoffs</h1>
             <div className="flex mt-6 space-x-4 text-sm overflow-x-auto pb-2">
               <span className={`font-medium whitespace-nowrap transition-colors ${step >= 1 ? "text-bv-blue-600" : "text-neutral-400"}`}>1. Upload Schedule</span>
               <span className="text-neutral-300">→</span>
