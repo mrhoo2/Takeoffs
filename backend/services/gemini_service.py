@@ -46,7 +46,8 @@ class GeminiService:
             print("Warning: GEMINI_API_KEY not set")
         else:
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-3-pro-preview')
+            # Gemini 3 Flash - Google's latest and fastest multimodal model
+            self.model = genai.GenerativeModel('gemini-3-flash-preview')
 
     @retry_with_backoff(retries=5, initial_delay=2)
     async def extract_equipment_types(self, content):
