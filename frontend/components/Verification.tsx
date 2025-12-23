@@ -36,6 +36,7 @@ interface VerificationProps {
         pageCount?: number;
     };
     onReset: () => void;
+    onRerun?: () => void;
 }
 
 // Helper function to map review status to sniper dot status
@@ -150,7 +151,7 @@ const EquipmentListItem = memo(function EquipmentListItem({
     );
 });
 
-export default function Verification({ planData, onReset }: VerificationProps) {
+export default function Verification({ planData, onReset, onRerun }: VerificationProps) {
     // Parse locations once with useMemo
     const locations = useMemo(() => {
         try {
@@ -328,6 +329,14 @@ export default function Verification({ planData, onReset }: VerificationProps) {
             <div className="flex justify-between items-center mb-4 shrink-0">
                 <h2 className="text-2xl font-bold text-neutral-900">Verify Equipment Locations</h2>
                 <div className="flex items-center space-x-4">
+                    {onRerun && (
+                        <button
+                            onClick={onRerun}
+                            className="px-4 py-2 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg font-medium transition-colors border border-purple-200"
+                        >
+                            Re-run Analysis
+                        </button>
+                    )}
                     <div className="flex items-center space-x-1 bg-white border border-neutral-200 rounded-lg p-1 shadow-sm">
                         <button onClick={() => setZoom(z => Math.max(0.5, z - 0.25))} className="px-2 py-1 hover:bg-neutral-50 rounded">-</button>
                         <span className="text-xs font-mono w-12 text-center">{(zoom * 100).toFixed(0)}%</span>

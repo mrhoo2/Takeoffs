@@ -284,19 +284,131 @@ export default function TakeoffsWorkspace() {
     };
 
     setPlanDocuments(prev => [...prev, newDoc]);
+    setIsProcessing(true);
+    setProcessingMessage("Starting upload...");
 
     // Update to processing status
     setPlanDocuments(prev =>
       prev.map(d => d.id === newDoc.id ? { ...d, status: "processing" as DocumentStatus } : d)
     );
 
-    // For now, just mark as complete - actual processing would happen in PlanUpload component
-    setTimeout(() => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("equipment", JSON.stringify(selectedEquipment));
+    if (scheduleText) {
+      formData.append("schedule_text", scheduleText);
+    }
+    if (symbolData) {
+      formData.append("visual_examples", JSON.stringify(symbolData));
+    }
+
+    // Create AbortController with 15-minute timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/upload/plans`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorDetail;
+        } catch {
+          const text = await response.text();
+          if (text) errorDetail += ` - ${text.substring(0, 200)}`;
+        }
+        throw new Error(errorDetail);
+      }
+
+      // Handle SSE stream
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      let finalResult = null;
+      let buffer = "";
+
+      while (true) {
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (readError: any) {
+          if (finalResult) break;
+          throw new Error(`Stream error: ${readError?.message || String(readError)}`);
+        }
+
+        const { done, value } = readResult;
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const eventSeparator = "\n\n";
+        let eventEnd;
+
+        while ((eventEnd = buffer.indexOf(eventSeparator)) !== -1) {
+          const eventData = buffer.slice(0, eventEnd);
+          buffer = buffer.slice(eventEnd + eventSeparator.length);
+
+          const lines = eventData.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const jsonStr = line.slice(6);
+              try {
+                const event = JSON.parse(jsonStr);
+                if (event.status === 'processing') {
+                  setProcessingMessage(event.step || "Processing plans...");
+                } else if (event.status === 'complete') {
+                  finalResult = event.result;
+                } else if (event.status === 'error') {
+                  throw new Error(event.message || "Processing failed");
+                }
+              } catch (parseErr) {
+                console.warn("Failed to parse SSE event:", jsonStr.substring(0, 100));
+              }
+            }
+          }
+        }
+      }
+
+      if (finalResult) {
+        setPlanData(finalResult);
+        const totalLocations = finalResult.equipment?.length || 0;
+        
+        // Update document status
+        setPlanDocuments(prev =>
+          prev.map(d => d.id === newDoc.id ? { ...d, status: "complete" as DocumentStatus } : d)
+        );
+
+        // Update summary
+        setSummary(prev => ({ ...prev, totalLocations }));
+
+        // Complete step 4 and move to step 5
+        completeStep(4);
+        setCurrentStep(5);
+      } else {
+        throw new Error("No result received from server");
+      }
+    } catch (error: any) {
+      console.error("Error uploading plans:", error);
       setPlanDocuments(prev =>
-        prev.map(d => d.id === newDoc.id ? { ...d, status: "complete" as DocumentStatus } : d)
+        prev.map(d => d.id === newDoc.id ? { ...d, status: "error" as DocumentStatus, error: error.message } : d)
       );
-    }, 1000);
-  }, []);
+    } finally {
+      clearTimeout(timeoutId);
+      setIsProcessing(false);
+      setProcessingMessage("");
+    }
+  }, [selectedEquipment, scheduleText, symbolData, completeStep]);
 
   // Handle plan removal
   const handleRemovePlan = useCallback((id: string) => {
@@ -311,6 +423,15 @@ export default function TakeoffsWorkspace() {
     completeStep(4);
     setCurrentStep(5);
   }, [completeStep]);
+
+  // Handle re-run analysis
+  const handleRerunAnalysis = useCallback(() => {
+    // If we have plans, use the most recent one to re-run
+    if (planDocuments.length > 0) {
+      const latestPlan = planDocuments[planDocuments.length - 1];
+      handleAddPlan(latestPlan.file);
+    }
+  }, [planDocuments, handleAddPlan]);
 
   // Handle verification reset
   const handleReset = useCallback(() => {
@@ -340,14 +461,16 @@ export default function TakeoffsWorkspace() {
       return <EmptyState step={1} />;
     }
 
-    // Show loading state during processing
-    if (isProcessing && currentStep === 1) {
+    // Show loading state during processing (Step 1 or Step 4/5 for plans)
+    if (isProcessing && (currentStep === 1 || currentStep === 4 || currentStep === 5)) {
       return (
         <div className="h-full flex items-center justify-center bg-neutral-50">
           <div className="text-center">
             <Loader2 className="h-10 w-10 animate-spin text-bv-blue-500 mx-auto mb-4" />
             <p className="text-neutral-600 font-medium">{processingMessage || "Processing..."}</p>
-            <p className="text-sm text-neutral-400 mt-2">AI analysis may take up to 2 minutes</p>
+            <p className="text-sm text-neutral-400 mt-2">
+              {currentStep === 1 ? "AI analysis may take up to 2 minutes" : "Analyzing plans for equipment locations..."}
+            </p>
           </div>
         </div>
       );
@@ -375,8 +498,23 @@ export default function TakeoffsWorkspace() {
         );
 
       case 4:
-        if (!planDocuments.some(d => d.status === "complete")) {
-          return <EmptyState step={4} />;
+        // If we already have plans uploaded and completed, or if we're currently processing,
+        // we shouldn't show the redundant upload button in the main page.
+        // The sidebar handles the upload.
+        if (planDocuments.some(d => d.status === "complete" || d.status === "processing")) {
+          // If complete, we should probably have moved to step 5, but if we're here, 
+          // show a summary or instructions to add more in sidebar.
+          return (
+            <div className="h-full flex flex-col items-center justify-center bg-neutral-50 p-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-bv-blue-100 flex items-center justify-center mb-6">
+                <Loader2 className="h-8 w-8 text-bv-blue-500 animate-spin" />
+              </div>
+              <h2 className="text-xl font-semibold text-neutral-800 mb-2">Analyzing Plans</h2>
+              <p className="text-neutral-500 max-w-md">
+                We're currently scanning your uploaded floor plans. Results will appear in the next step shortly.
+              </p>
+            </div>
+          );
         }
         return (
           <PlanUpload
@@ -393,6 +531,7 @@ export default function TakeoffsWorkspace() {
             <Verification
               planData={planData}
               onReset={handleReset}
+              onRerun={handleRerunAnalysis}
             />
           );
         }
