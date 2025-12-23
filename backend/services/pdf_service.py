@@ -165,7 +165,8 @@ class PDFService:
             status_map = {
                 'correct': 'Correct',
                 'incorrect': 'Incorrect',
-                'duplicate': 'Duplicate'
+                'duplicate': 'Duplicate',
+                'manual': 'Manual'
             }
             
             # 3. Add rows to summary table
@@ -246,6 +247,9 @@ class PDFService:
                     
                     if status_raw == 'correct': 
                         color = (0, 0.6, 0) # Green
+                        target_ocg = primary_ocg
+                    elif status_raw == 'manual': 
+                        color = (0.55, 0.36, 0.96) # Purple - manual entries treated as correct
                         target_ocg = primary_ocg
                     elif status_raw == 'incorrect': 
                         color = (0.8, 0, 0) # Red

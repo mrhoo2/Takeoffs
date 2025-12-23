@@ -49,7 +49,7 @@ export default function TakeoffsWorkspace() {
 
   // Export state
   const [isDownloading, setIsDownloading] = useState(false);
-  const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate'>>({});
+  const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate' | 'manual'>>({});
 
   // Zoom state (moved to local step component if needed, but keeping for now if used elsewhere)
   const [zoom, setZoom] = useState(100);
@@ -453,6 +453,28 @@ export default function TakeoffsWorkspace() {
     window.location.reload();
   }, []);
 
+  // Handle adding a new location manually
+  const handleAddLocation = useCallback((newLocation: { type: string; tag: string; bbox?: [number, number, number, number]; confidence: number; page?: number }) => {
+    if (!planData) return;
+    
+    // Parse existing locations if string
+    const existingLocations = typeof planData.locations === 'string' 
+      ? JSON.parse(planData.locations) 
+      : planData.locations || [];
+    
+    // Add the new location
+    const updatedLocations = [...existingLocations, newLocation];
+    
+    // Update planData with the new locations array
+    setPlanData((prev: any) => ({
+      ...prev,
+      locations: updatedLocations
+    }));
+    
+    // Update summary
+    setSummary(prev => ({ ...prev, totalLocations: updatedLocations.length }));
+  }, [planData]);
+
   // Handle download summary
   const handleDownloadSummary = useCallback(async () => {
     if (!planData || !planData.pdfId) return;
@@ -550,6 +572,7 @@ export default function TakeoffsWorkspace() {
               onReset={handleReset}
               onRerun={(model) => handleRerunAnalysis(model)}
               onStatusChange={setReviewStatus}
+              onAddLocation={handleAddLocation}
             />
           );
         }

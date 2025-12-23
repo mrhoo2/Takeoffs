@@ -9,7 +9,7 @@ interface SniperDotProps {
   x: number;  // X coordinate in PDF space
   y: number;  // Y coordinate in PDF space
   isActive: boolean;
-  status: 'pending' | 'confirmed' | 'declined' | 'duplicate';
+  status: 'pending' | 'confirmed' | 'declined' | 'duplicate' | 'manual';
 }
 
 // BuildVision color tokens
@@ -18,6 +18,7 @@ const STATUS_COLORS = {
   confirmed: { bg: 'bg-green-400', hex: '#16DA7C' },
   declined: { bg: 'bg-red-400', hex: '#EC4343' },
   duplicate: { bg: 'bg-yellow-400', hex: '#FFCC17' },
+  manual: { bg: 'bg-purple-500', hex: '#8B5CF6' },
 } as const;
 
 export const SniperDot: React.FC<SniperDotProps> = React.memo(({
@@ -141,6 +142,29 @@ export const SniperDot: React.FC<SniperDotProps> = React.memo(({
               d="M6 3v3m0 2h.01M6 11A5 5 0 106 1a5 5 0 000 10z"
               stroke={STATUS_COLORS.duplicate.hex}
               strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      )}
+
+      {/* Plus badge for manual items */}
+      {status === 'manual' && !isActive && (
+        <div
+          className="absolute bg-white rounded-full shadow-md flex items-center justify-center"
+          style={{
+            width: 16,
+            height: 16,
+            top: -6,
+            right: -6,
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path
+              d="M5 2v6M2 5h6"
+              stroke={STATUS_COLORS.manual.hex}
+              strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />

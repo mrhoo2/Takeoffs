@@ -38,14 +38,16 @@ interface VerificationProps {
     };
     onReset: () => void;
     onRerun?: (model?: "flash" | "pro") => void;
-    onStatusChange?: (status: Record<number, 'correct' | 'incorrect' | 'duplicate'>) => void;
+    onStatusChange?: (status: Record<number, 'correct' | 'incorrect' | 'duplicate' | 'manual'>) => void;
+    onAddLocation?: (location: Location) => void;
 }
 
 // Helper function to map review status to sniper dot status
-const mapToSniperStatus = (reviewStatus?: 'correct' | 'incorrect' | 'duplicate'): 'pending' | 'confirmed' | 'declined' | 'duplicate' => {
+const mapToSniperStatus = (reviewStatus?: 'correct' | 'incorrect' | 'duplicate' | 'manual'): 'pending' | 'confirmed' | 'declined' | 'duplicate' | 'manual' => {
     if (!reviewStatus) return 'pending';
     if (reviewStatus === 'correct') return 'confirmed';
     if (reviewStatus === 'incorrect') return 'declined';
+    if (reviewStatus === 'manual') return 'manual';
     return 'duplicate';
 };
 
@@ -62,7 +64,7 @@ const SniperDotWrapper = memo(function SniperDotWrapper({
     loc: Location;
     globalIndex: number;
     isSelected: boolean;
-    status?: 'correct' | 'incorrect' | 'duplicate';
+    status?: 'correct' | 'incorrect' | 'duplicate' | 'manual';
     svgW: number;
     svgH: number;
     onSelect: (index: number) => void;
@@ -116,7 +118,7 @@ const EquipmentListItem = memo(function EquipmentListItem({
     loc: Location;
     globalIndex: number;
     isSelected: boolean;
-    status?: 'correct' | 'incorrect' | 'duplicate';
+    status?: 'correct' | 'incorrect' | 'duplicate' | 'manual';
     onSelect: (index: number) => void;
 }) {
     return (
@@ -133,11 +135,13 @@ const EquipmentListItem = memo(function EquipmentListItem({
                 status === 'correct' ? 'bg-green-100 text-green-700' :
                 status === 'incorrect' ? 'bg-red-100 text-red-700' :
                 status === 'duplicate' ? 'bg-yellow-100 text-yellow-700' :
+                status === 'manual' ? 'bg-purple-100 text-purple-700' :
                 'bg-neutral-100 text-neutral-400'
             }`}>
                 {status === 'correct' ? '✓' :
                  status === 'incorrect' ? '✕' :
-                 status === 'duplicate' ? '!' : '?'}
+                 status === 'duplicate' ? '!' :
+                 status === 'manual' ? '+' : '?'}
             </div>
             
             {/* Equipment info */}
@@ -158,7 +162,7 @@ const EquipmentListItem = memo(function EquipmentListItem({
     );
 });
 
-export default function Verification({ planData, onReset, onRerun, onStatusChange }: VerificationProps) {
+export default function Verification({ planData, onReset, onRerun, onStatusChange, onAddLocation }: VerificationProps) {
     // Use images for background if available for better performance
     // If not explicitly provided, we could fall back to SVG
     const useImageBackground = true; 
@@ -192,7 +196,7 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
     const [currentPage, setCurrentPage] = useState(1);
     const [zoom, setZoom] = useState(1);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-    const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate'>>({});
+    const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate' | 'manual'>>({});
 
     // Pass status up to parent
     useEffect(() => {
@@ -330,7 +334,7 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
     };
 
     // Click-to-add handler for manual mode
-    const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         if (!manualMode) return;
         
         const rect = e.currentTarget.getBoundingClientRect();
@@ -348,12 +352,25 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
                 confidence: 1.0,
                 page: currentPage
             };
-            locations.push(newLoc);
-            setSelectedIndex(locations.length - 1);
-            // Don't auto-mark as correct - let user review it
+            
+            // Call parent callback to add the new location
+            if (onAddLocation) {
+                onAddLocation(newLoc);
+                // The new index will be locations.length (before the addition)
+                const newIndex = locations.length;
+                // Set status to 'manual' for the new item
+                setReviewStatus(prev => ({
+                    ...prev,
+                    [newIndex]: 'manual'
+                }));
+                // Select the newly added item after a brief delay to allow state to update
+                setTimeout(() => {
+                    setSelectedIndex(newIndex);
+                }, 50);
+            }
         }
         setManualMode(false);
-    };
+    }, [manualMode, currentPage, onAddLocation, locations.length]);
 
     const selectedLocation = selectedIndex !== null ? locations[selectedIndex] : null;
 
