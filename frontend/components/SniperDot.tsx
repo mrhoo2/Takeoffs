@@ -40,13 +40,14 @@ export const SniperDot: React.FC<SniperDotProps> = React.memo(({
         left: x,
         top: y,
         // Center the dot on the coordinate
-        transform: 'translate(-50%, -50%)',
+        transform: 'translate(-50%, -50%) translateZ(0)',
         zIndex: isActive ? 100 : 10, // Active dots should be above everything
+        willChange: 'transform',
       }}
     >
       {/* Pulse rings for active item */}
       {isActive && status === 'pending' && (
-        <>
+        <div className="pointer-events-none">
           <div
             style={{
               position: 'absolute',
@@ -59,7 +60,9 @@ export const SniperDot: React.FC<SniperDotProps> = React.memo(({
               borderRadius: '50%',
               border: `3px solid ${color}`,
               opacity: 0.4,
-              animation: 'sniper-ping 2s ease-out infinite',
+              animation: 'sniper-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite',
+              willChange: 'transform, opacity',
+              transform: 'translateZ(0)',
             }}
           />
           <div
@@ -73,10 +76,12 @@ export const SniperDot: React.FC<SniperDotProps> = React.memo(({
               marginTop: -25,
               borderRadius: '50%',
               backgroundColor: `${color}30`,
-              animation: 'sniper-pulse 2s ease-in-out infinite',
+              animation: 'sniper-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              willChange: 'transform, opacity',
+              transform: 'translateZ(0)',
             }}
           />
-        </>
+        </div>
       )}
 
       {/* Center dot */}
@@ -90,8 +95,10 @@ export const SniperDot: React.FC<SniperDotProps> = React.memo(({
           boxShadow: isActive
             ? `0 0 0 4px ${color}50, 0 4px 20px rgba(0,0,0,0.3)`
             : '0 2px 8px rgba(0,0,0,0.2)',
-          transition: 'all 300ms ease-out',
+          transition: 'all 200ms cubic-bezier(0.4, 0, 0.2, 1)',
           pointerEvents: 'auto', // Enable clicks on the dot itself
+          willChange: 'transform, width, height, box-shadow',
+          transform: 'translateZ(0)',
         }}
       />
 

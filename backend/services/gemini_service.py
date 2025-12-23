@@ -46,12 +46,19 @@ class GeminiService:
             print("Warning: GEMINI_API_KEY not set")
         else:
             genai.configure(api_key=api_key)
-            # Gemini 3 Flash - Google's latest and fastest multimodal model
-            self.model = genai.GenerativeModel('gemini-3-flash-preview')
+            # Default to Flash
+            self.flash_model = genai.GenerativeModel('gemini-3-flash-preview')
+            self.pro_model = genai.GenerativeModel('gemini-3-pro-preview')
+
+    def _get_model(self, model_name="flash"):
+        if model_name == "pro":
+            print("Using Gemini 3 Pro model")
+            return self.pro_model
+        return self.flash_model
 
     @retry_with_backoff(retries=5, initial_delay=2)
-    async def extract_equipment_types(self, content):
-        print("extract_equipment_types: Starting Gemini API call...")
+    async def extract_equipment_types(self, content, model_name="flash"):
+        print(f"extract_equipment_types: Starting Gemini API call ({model_name})...")
         import time
         start_time = time.time()
         
@@ -65,15 +72,17 @@ class GeminiService:
         - type: The name/type of the equipment (e.g., "Water Source Heat Pump", "Rooftop Unit").
         - tag_prefix: The prefix used in the tags (e.g., "WSHP", "RTU").
         - is_typical: Boolean, true if typical, false if instance-based.
-        - tags: A list of example tags found (e.g., ["WSHP-A", "WSHP-B"] or ["RTU-1"]).
+        - tags: A complete list of ALL unique tags found in the schedule for this equipment type (e.g., ["WSHP-A", "WSHP-B"] or ["RTU-1", "RTU-2", "RTU-3"]). It is CRITICAL to extract every single unique tag.
         - page: The page number (1-indexed) where this equipment is found.
         - bbox: [ymin, xmin, ymax, xmax] coordinates (0-1000 scale) of the equipment entry in the schedule.
         """
 
+        model = self._get_model(model_name)
+
         # Text-based extraction (no bbox possible really, but we keep interface)
         if isinstance(content, str):
             full_prompt = f"{prompt_text}\n\nText content:\n{content}"
-            response = await self.model.generate_content_async(full_prompt)
+            response = await model.generate_content_async(full_prompt)
         else:
             # Image-based extraction (content is list of images)
             full_prompt = [prompt_text]
@@ -81,7 +90,7 @@ class GeminiService:
                 full_prompt.extend(content)
             else:
                 full_prompt.append(content)
-            response = await self.model.generate_content_async(full_prompt)
+            response = await model.generate_content_async(full_prompt)
 
         elapsed = time.time() - start_time
         print(f"extract_equipment_types: Gemini API returned after {elapsed:.2f}s")
@@ -99,8 +108,8 @@ class GeminiService:
         return text
 
     @retry_with_backoff(retries=5, initial_delay=2)
-    async def find_equipment_locations(self, plan_images, equipment_list, schedule_text=None, plan_text=None, visual_examples=None):
-        print("find_equipment_locations: Starting...")
+    async def find_equipment_locations(self, plan_images, equipment_list, schedule_text=None, plan_text=None, visual_examples=None, model_name="flash"):
+        print(f"find_equipment_locations: Starting ({model_name})...")
         
         # If single image, convert to list
         if not isinstance(plan_images, list):
@@ -122,7 +131,8 @@ class GeminiService:
                         page_idx + 1,
                         schedule_text,
                         plan_text,
-                        visual_examples
+                        visual_examples,
+                        model_name=model_name
                     )
                 else:
                     # Standard processing for smaller images
@@ -132,7 +142,8 @@ class GeminiService:
                         page_idx + 1,
                         schedule_text,
                         plan_text,
-                        visual_examples
+                        visual_examples,
+                        model_name=model_name
                     )
                 
                 print(f"find_equipment_locations: Page {page_idx + 1} returned {len(page_locations)} locations")
@@ -153,16 +164,19 @@ class GeminiService:
             print(f"find_equipment_locations: ERROR converting to JSON: {e}")
             return "[]"
 
-    async def _process_single_image(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples):
+    async def _process_single_image(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples, model_name="flash"):
         prompt = f"""
-        You are an expert mechanical engineer. Analyze the provided floor plan image and locate the following equipment:
+        You are an expert mechanical engineer. Analyze the provided floor plan image and locate the following equipment.
+        
+        Target Equipment and Specific Tags to Find:
         {equipment_list}
         
+        For each equipment type listed above, search specifically for the tags provided in its "tags" list. 
         For each piece of equipment found, provide its PRECISE location using a bounding box.
         
         Return the result as a JSON list of objects with the following keys:
         - type: The type of equipment found.
-        - tag: The specific tag found (e.g., "WSHP-1").
+        - tag: The specific tag found (e.g., "WSHP-1"). Must be one of the tags from the provided list.
         - page: {page_num}
         - bbox: [ymin, xmin, ymax, xmax] coordinates (0-1000 scale) of the equipment on the plan. Ensure this box tightly encloses the equipment symbol and its tag.
         - confidence: Your confidence level (0.0-1.0).
@@ -181,16 +195,17 @@ class GeminiService:
             self._add_visual_examples(content, visual_examples)
 
         content.append(image)
+        model = self._get_model(model_name)
 
         try:
-            response = await self.model.generate_content_async(content)
+            response = await model.generate_content_async(content)
             return self._parse_json_response(response.text)
         except Exception as e:
             print(f"Error processing page {page_num}: {e}")
             return []
 
-    async def process_with_tiling(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples):
-        print(f"process_with_tiling: Starting for page {page_num}")
+    async def process_with_tiling(self, image, equipment_list, page_num, schedule_text, plan_text, visual_examples, model_name="flash"):
+        print(f"process_with_tiling: Starting for page {page_num} ({model_name})")
         width, height = image.size
         
         # Define tile size and overlap
@@ -255,7 +270,7 @@ class GeminiService:
                         
                         # Wrap with timeout to prevent indefinite waiting
                         result = await asyncio.wait_for(
-                            self._process_single_tile(tile, equipment_list, page_num, visual_examples, width, height),
+                            self._process_single_tile(tile, equipment_list, page_num, visual_examples, width, height, model_name=model_name),
                             timeout=TILE_TIMEOUT
                         )
                         
@@ -308,21 +323,24 @@ class GeminiService:
             # Return unmerged locations if merge fails
             return all_tile_locations
 
-    async def _process_single_tile(self, tile, equipment_list, page_num, visual_examples, full_width, full_height):
+    async def _process_single_tile(self, tile, equipment_list, page_num, visual_examples, full_width, full_height, model_name="flash"):
         prompt = f"""
-        You are an expert mechanical engineer. Analyze the provided floor plan tile (part of a larger plan) and locate the following equipment:
+        You are an expert mechanical engineer. Analyze the provided floor plan tile (part of a larger plan) and locate the following equipment.
+        
+        Target Equipment and Specific Tags to Find:
         {equipment_list}
         
         IMPORTANT INSTRUCTIONS:
-        1. Ignore any equipment symbols that are significantly cut off at the edges of this tile. They will be captured in overlapping tiles.
-        2. Be extremely strict with tag matching. Do not hallucinate tags. If a tag is not clearly legible, do not invent one.
-        3. Provide a confidence score (0.0-1.0) for each detection.
+        1. Search specifically for the tags provided in the "tags" list for each equipment type.
+        2. Ignore any equipment symbols that are significantly cut off at the edges of this tile. They will be captured in overlapping tiles.
+        3. Be extremely strict with tag matching. Do not hallucinate tags. If a tag is not clearly legible, do not invent one.
+        4. Provide a confidence score (0.0-1.0) for each detection.
         
         For each piece of equipment found, provide its PRECISE location using a bounding box.
         
         Return the result as a JSON list of objects with the following keys:
         - type: The type of equipment found.
-        - tag: The specific tag found (e.g., "WSHP-1").
+        - tag: The specific tag found (e.g., "WSHP-1"). Must be one of the tags from the provided list.
         - bbox: [ymin, xmin, ymax, xmax] coordinates (0-1000 scale) RELATIVE TO THIS TILE.
         - confidence: Your confidence level (0.0-1.0).
         """
@@ -332,10 +350,11 @@ class GeminiService:
             self._add_visual_examples(content, visual_examples)
             
         content.append(tile['image'])
+        model = self._get_model(model_name)
         
         tile_locations = []
         try:
-            response = await self.model.generate_content_async(content)
+            response = await model.generate_content_async(content)
             raw_locations = self._parse_json_response(response.text)
             
             # Convert relative bbox to absolute bbox

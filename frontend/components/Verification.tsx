@@ -34,9 +34,11 @@ interface VerificationProps {
         images?: string[]; // Fallback for backward compatibility
         locations: string | Location[];
         pageCount?: number;
+        modelUsed?: string;
     };
     onReset: () => void;
-    onRerun?: () => void;
+    onRerun?: (model?: "flash" | "pro") => void;
+    onStatusChange?: (status: Record<number, 'correct' | 'incorrect' | 'duplicate'>) => void;
 }
 
 // Helper function to map review status to sniper dot status
@@ -74,21 +76,26 @@ const SniperDotWrapper = memo(function SniperDotWrapper({
     const sniperStatus = mapToSniperStatus(status);
 
     return (
-        <div onClick={(e) => { e.stopPropagation(); onSelect(globalIndex); }}>
+        <div 
+            onClick={(e) => { e.stopPropagation(); onSelect(globalIndex); }}
+            className="cursor-pointer"
+        >
             <SniperDot
                 x={centerX}
                 y={centerY}
                 isActive={isSelected}
                 status={sniperStatus}
             />
-            {/* Label for selected item */}
+            {/* Label for selected item - only render if selected */}
             {isSelected && (
                 <div 
-                    className="absolute bg-bv-blue-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-[110]" 
+                    className="absolute bg-bv-blue-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-[110] shadow-lg" 
                     style={{ 
                         left: centerX,
                         top: centerY - 30,
                         transform: 'translateX(-50%)',
+                        // Optimization: Avoid layout shifts
+                        contain: 'content',
                     }}
                 >
                     {loc.tag}
@@ -151,7 +158,11 @@ const EquipmentListItem = memo(function EquipmentListItem({
     );
 });
 
-export default function Verification({ planData, onReset, onRerun }: VerificationProps) {
+export default function Verification({ planData, onReset, onRerun, onStatusChange }: VerificationProps) {
+    // Use images for background if available for better performance
+    // If not explicitly provided, we could fall back to SVG
+    const useImageBackground = true; 
+
     // Parse locations once with useMemo
     const locations = useMemo(() => {
         try {
@@ -182,10 +193,18 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
     const [zoom, setZoom] = useState(1);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
     const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate'>>({});
+
+    // Pass status up to parent
+    useEffect(() => {
+        if (onStatusChange) {
+            onStatusChange(reviewStatus);
+        }
+    }, [reviewStatus, onStatusChange]);
     const [manualMode, setManualMode] = useState(false);
     const [pageWidth, setPageWidth] = useState(0);
     const [pageHeight, setPageHeight] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const sidebarListRef = useRef<HTMLDivElement>(null);
 
     const [svgContent, setSvgContent] = useState<string | null>(null);
     const [svgLoading, setSvgLoading] = useState(false);
@@ -198,6 +217,12 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
     // Fetch SVG content when page changes
     useEffect(() => {
         const fetchSvg = async () => {
+            // Update page dimensions first
+            if (currentPageInfo) {
+                setPageWidth(currentPageInfo.width);
+                setPageHeight(currentPageInfo.height);
+            }
+
             if (planData.pdfId) {
                 setSvgLoading(true);
                 setSvgContent(null);
@@ -239,6 +264,16 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
         return locations.filter(loc => (loc.page || 1) === currentPage);
     }, [locations, currentPage]);
 
+    // Scroll sidebar to selected item
+    useEffect(() => {
+        if (selectedIndex !== null && sidebarListRef.current) {
+            const selectedElement = sidebarListRef.current.querySelector(`[data-index="${selectedIndex}"]`);
+            if (selectedElement) {
+                selectedElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+    }, [selectedIndex]);
+
     // Memoized handler for selecting equipment
     const handleSelectEquipmentCallback = useCallback((globalIndex: number) => {
         const loc = locations[globalIndex];
@@ -246,11 +281,13 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
 
         // Navigate to the correct page if needed
         const targetPage = loc.page || 1;
+        
+        // Update selection first for immediate UI feedback
+        setSelectedIndex(globalIndex);
+
         if (targetPage !== currentPage) {
             setCurrentPage(targetPage);
         }
-
-        setSelectedIndex(globalIndex);
 
         // Pan to the location if it has a bounding box
         if (loc.bbox && containerRef.current && pageWidth > 0 && pageHeight > 0) {
@@ -261,13 +298,14 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
             const scrollLeft = boxCenterX - containerWidth / 2;
             const scrollTop = boxCenterY - containerHeight / 2;
 
-            setTimeout(() => {
+            // Use requestAnimationFrame for smoother UI response
+            requestAnimationFrame(() => {
                 containerRef.current?.scrollTo({
                     left: Math.max(0, scrollLeft),
                     top: Math.max(0, scrollTop),
-                    behavior: 'smooth'
+                    behavior: targetPage !== currentPage ? 'auto' : 'smooth'
                 });
-            }, targetPage !== currentPage ? 100 : 0);
+            });
         }
     }, [locations, currentPage, pageWidth, pageHeight, zoom]);
 
@@ -330,12 +368,23 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
                 <h2 className="text-2xl font-bold text-neutral-900">Verify Equipment Locations</h2>
                 <div className="flex items-center space-x-4">
                     {onRerun && (
-                        <button
-                            onClick={onRerun}
-                            className="px-4 py-2 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg font-medium transition-colors border border-purple-200"
-                        >
-                            Re-run Analysis
-                        </button>
+                        <div className="flex gap-2">
+                            {planData.modelUsed !== 'pro' && (
+                                <button
+                                    onClick={() => onRerun('pro')}
+                                    className="px-4 py-2 bg-bv-blue-600 text-white hover:bg-bv-blue-700 rounded-lg font-medium transition-all shadow-sm hover:shadow-md border border-bv-blue-700 flex items-center gap-2"
+                                >
+                                    <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">Pro</span>
+                                    Upgrade Accuracy
+                                </button>
+                            )}
+                            <button
+                                onClick={() => onRerun()}
+                                className="px-4 py-2 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg font-medium transition-colors border border-purple-200"
+                            >
+                                Re-run {planData.modelUsed === 'pro' ? '(Pro)' : '(Flash)'}
+                            </button>
+                        </div>
                     )}
                     <div className="flex items-center space-x-1 bg-white border border-neutral-200 rounded-lg p-1 shadow-sm">
                         <button onClick={() => setZoom(z => Math.max(0.5, z - 0.25))} className="px-2 py-1 hover:bg-neutral-50 rounded">-</button>
@@ -366,14 +415,31 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
                         >
                             {svgLoading ? (
                                 <div className="h-96 flex items-center justify-center text-neutral-400">Loading page...</div>
-                            ) : svgContent && currentPageInfo ? (
+                            ) : (svgContent || planData.images?.[currentPage - 1]) && currentPageInfo ? (
                                 <div className="relative">
-                                    <SvgPageViewer
-                                        svgContent={svgContent}
-                                        width={currentPageInfo.width}
-                                        height={currentPageInfo.height}
-                                        onLoad={onPageLoadSuccess}
-                                    />
+                                    {/* Hybrid Viewer: Use high-res image for background if SVG is slow or if we prefer images */}
+                                    {useImageBackground && planData.images?.[currentPage - 1] ? (
+                                        <img 
+                                            src={planData.images[currentPage - 1]} 
+                                            alt={`Page ${currentPage}`}
+                                            width={currentPageInfo.width}
+                                            height={currentPageInfo.height}
+                                            className="block"
+                                            style={{
+                                                // Prevent the image from being draggable to allow panning the container
+                                                userSelect: 'none',
+                                                pointerEvents: 'none'
+                                            }}
+                                            onLoad={() => onPageLoadSuccess({ width: currentPageInfo.width, height: currentPageInfo.height })}
+                                        />
+                                    ) : svgContent ? (
+                                        <SvgPageViewer
+                                            svgContent={svgContent}
+                                            width={currentPageInfo.width}
+                                            height={currentPageInfo.height}
+                                            onLoad={onPageLoadSuccess}
+                                        />
+                                    ) : null}
                                     
                                     {/* Overlay for sniper dots */}
                                     {currentPageInfo.width > 0 && (
@@ -401,15 +467,7 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
                                         </div>
                                     )}
                                 </div>
-                            ) : planData.images?.[currentPage - 1] ? (
-                                // Fallback to image display for backward compatibility
-                                <img 
-                                    src={planData.images[currentPage - 1]} 
-                                    alt={`Page ${currentPage}`} 
-                                    className="w-full h-auto" 
-                                    draggable={false} 
-                                />
-                            ) : (
+                                    ) : (
                                 <div className="h-96 flex items-center justify-center text-neutral-400">No content available</div>
                             )}
                         </div>
@@ -445,20 +503,28 @@ export default function Verification({ planData, onReset, onRerun }: Verificatio
                     </div>
 
                     {/* Equipment List - using memoized EquipmentListItem component */}
-                    <div className="flex-1 overflow-y-auto min-h-0">
+                    <div 
+                        ref={sidebarListRef}
+                        className="flex-1 overflow-y-auto min-h-0 overscroll-contain"
+                        style={{ 
+                            WebkitOverflowScrolling: 'touch',
+                            scrollBehavior: 'smooth',
+                        }}
+                    >
                         {currentLocations.length > 0 ? (
                             <div className="divide-y divide-neutral-100">
                                 {currentLocations.map((loc) => {
                                     const globalIndex = locationIndexMap.get(loc) ?? -1;
                                     return (
-                                        <EquipmentListItem
-                                            key={globalIndex}
-                                            loc={loc}
-                                            globalIndex={globalIndex}
-                                            isSelected={globalIndex === selectedIndex}
-                                            status={reviewStatus[globalIndex]}
-                                            onSelect={handleSelectEquipmentCallback}
-                                        />
+                                        <div key={globalIndex} data-index={globalIndex}>
+                                            <EquipmentListItem
+                                                loc={loc}
+                                                globalIndex={globalIndex}
+                                                isSelected={globalIndex === selectedIndex}
+                                                status={reviewStatus[globalIndex]}
+                                                onSelect={handleSelectEquipmentCallback}
+                                            />
+                                        </div>
                                     );
                                 })}
                             </div>

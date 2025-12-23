@@ -13,6 +13,7 @@ export default function PlanUpload({ selectedEquipment, scheduleText, visualExam
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progressMessage, setProgressMessage] = useState<string>("");
+    const [modelName, setModelName] = useState<"flash" | "pro">("flash");
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -22,6 +23,7 @@ export default function PlanUpload({ selectedEquipment, scheduleText, visualExam
             const formData = new FormData();
             formData.append("file", file);
             formData.append("equipment", JSON.stringify(selectedEquipment));
+            formData.append("model_name", modelName);
             if (scheduleText) {
                 formData.append("schedule_text", scheduleText);
             }
@@ -187,6 +189,30 @@ export default function PlanUpload({ selectedEquipment, scheduleText, visualExam
                     {error}
                 </div>
             )}
+
+            <div className="mb-8 w-full max-w-sm">
+                <div className="flex items-center justify-between p-1 bg-neutral-100 rounded-lg mb-2">
+                    <button
+                        onClick={() => setModelName("flash")}
+                        disabled={uploading}
+                        className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${modelName === "flash" ? 'bg-white text-bv-blue-600 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                    >
+                        Fast (Flash)
+                    </button>
+                    <button
+                        onClick={() => setModelName("pro")}
+                        disabled={uploading}
+                        className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${modelName === "pro" ? 'bg-white text-bv-blue-600 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+                    >
+                        Accurate (Pro)
+                    </button>
+                </div>
+                <p className="text-[10px] text-neutral-400 text-center">
+                    {modelName === "flash" 
+                        ? "Best for speed and initial drafts" 
+                        : "Recommended for high-accuracy verification"}
+                </p>
+            </div>
 
             <label className={`cursor-pointer bg-bv-blue-500 hover:bg-bv-blue-600 text-white font-medium py-2.5 px-6 rounded-lg transition-all shadow-sm hover:shadow-md ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 {uploading ? "Processing & Locating..." : "Select PDF"}

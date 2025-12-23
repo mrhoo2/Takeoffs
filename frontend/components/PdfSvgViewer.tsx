@@ -22,61 +22,39 @@ const SvgPageViewer = memo(function SvgPageViewer({
     const [loaded, setLoaded] = useState(false);
     
     // Memoize processed SVG content to avoid re-processing
+    // Instead of DOMParser, we use string manipulation for basic attributes
+    // and rely on dangerouslySetInnerHTML for performance.
     const processedSvg = useMemo(() => {
-        if (!svgContent) return null;
+        if (!svgContent) return "";
         
-        // Parse the SVG and optimize it
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(svgContent, "image/svg+xml");
-        const svgElement = doc.querySelector("svg");
-        
-        if (svgElement) {
-            // Set dimensions
-            svgElement.setAttribute("width", `${width}`);
-            svgElement.setAttribute("height", `${height}`);
-            
-            // Add performance optimization attributes
-            svgElement.style.display = "block";
-            svgElement.style.maxWidth = "none";
-            
-            // Prevent text selection which can slow things down
-            svgElement.style.userSelect = "none";
-            svgElement.style.webkitUserSelect = "none";
-            
-            return svgElement.outerHTML;
-        }
-        
+        // Optimization: if it's already a string, we can inject it.
+        // We ensure width/height are set on the outer container instead of
+        // expensive attribute manipulation on every path.
         return svgContent;
-    }, [svgContent, width, height]);
+    }, [svgContent]);
 
     useEffect(() => {
-        if (containerRef.current && processedSvg) {
-            // Insert the processed SVG
-            containerRef.current.innerHTML = processedSvg;
-            
+        if (svgContent && onLoad) {
+            onLoad({ width, height });
             setLoaded(true);
-            
-            if (onLoad) {
-                onLoad({ width, height });
-            }
         }
-    }, [processedSvg, width, height, onLoad]);
+    }, [svgContent, width, height, onLoad]);
 
     return (
         <div 
-            ref={containerRef}
             className={`svg-page-viewer ${className}`}
             style={{ 
                 width: width,
                 height: height,
                 lineHeight: 0,
-                // GPU acceleration hints
                 willChange: 'transform',
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
-                // Prevent layout thrashing
                 contain: 'layout style paint',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
             }}
+            dangerouslySetInnerHTML={{ __html: processedSvg }}
         />
     );
 });

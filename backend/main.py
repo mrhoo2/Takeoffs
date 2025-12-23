@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+
+class ExportRequest(BaseModel):
+    pdfId: str
+    locations: list | str
+    reviewStatus: dict | None = None
+    equipmentList: list | None = None
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware to log all requests and responses with timing"""
@@ -254,7 +261,8 @@ async def upload_plans(
     file: UploadFile = File(...),
     equipment: str = Form(...), # Expecting JSON string of selected equipment
     schedule_text: str = Form(None),
-    visual_examples: str = Form(None) # Expecting JSON string of visual examples
+    visual_examples: str = Form(None), # Expecting JSON string of visual examples
+    model_name: str = Form("flash")
 ):
     """
     Upload plans endpoint that streams progress updates via SSE to keep connection alive.
@@ -306,7 +314,7 @@ async def upload_plans(
             yield f"data: {json.dumps({'status': 'processing', 'step': f'AI processing {len(images)} page(s) - this may take several minutes...'})}\n\n"
             
             # Process with Gemini - with heartbeat to keep connection alive
-            logger.info("=== STARTING GEMINI PROCESSING ===")
+            logger.info(f"=== STARTING GEMINI PROCESSING ({model_name}) ===")
             
             # Create a task for Gemini processing
             gemini_task = asyncio.create_task(
@@ -315,7 +323,8 @@ async def upload_plans(
                     equipment, 
                     schedule_text=schedule_text, 
                     plan_text=plan_text,
-                    visual_examples=examples_data
+                    visual_examples=examples_data,
+                    model_name=model_name
                 )
             )
             
@@ -375,7 +384,8 @@ async def upload_plans(
                 "locations": locations_json,
                 "pdfId": pdf_id,
                 "pageInfo": page_info,
-                "pageCount": len(images)
+                "pageCount": len(images),
+                "modelUsed": model_name
             }
             
             logger.info(f"Sending final result with {len(page_info)} pages, locations length: {len(locations_json)}")
@@ -406,6 +416,40 @@ async def upload_plans(
         }
     )
 
+
+@app.post("/export/summary")
+async def export_summary(request: ExportRequest):
+    """
+    Generate and export a summary PDF with marked-up locations.
+    """
+    if request.pdfId not in pdf_storage:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    
+    content = pdf_storage[request.pdfId]
+    
+    # Parse locations if they're a string
+    locations = request.locations
+    if isinstance(locations, str):
+        try:
+            locations = json.loads(locations)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid locations format")
+
+    # Generate the marked-up PDF
+    output_pdf = await pdf_service.generate_summary_pdf(
+        content, 
+        locations, 
+        review_status=request.reviewStatus,
+        equipment_list=request.equipmentList
+    )
+    
+    return Response(
+        content=output_pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=takeoff_summary.pdf"
+        }
+    )
 
 @app.get("/pdf/{pdf_id}/page/{page_num}/svg")
 async def get_pdf_page_svg(pdf_id: str, page_num: int):

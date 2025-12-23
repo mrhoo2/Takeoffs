@@ -51,7 +51,7 @@ export default function EquipmentSelection({ equipmentList, images, onConfirm }:
     }
 
     return (
-        <div className="w-full max-w-6xl mx-auto">
+        <div className="w-full max-w-6xl mx-auto pb-12">
             <h2 className="text-2xl font-bold mb-6 text-neutral-900">Select Equipment to Locate</h2>
             <div className="grid grid-cols-1 gap-6 mb-8">
                 {parsedList.map((item: Equipment, index: number) => (

@@ -47,7 +47,11 @@ export default function TakeoffsWorkspace() {
     totalLocations: 0,
   });
 
-  // Zoom state
+  // Export state
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState<Record<number, 'correct' | 'incorrect' | 'duplicate'>>({});
+
+  // Zoom state (moved to local step component if needed, but keeping for now if used elsewhere)
   const [zoom, setZoom] = useState(100);
 
   // Can navigate to a step?
@@ -275,26 +279,36 @@ export default function TakeoffsWorkspace() {
   }, []);
 
   // Handle plan upload
-  const handleAddPlan = useCallback(async (file: File) => {
-    const newDoc: UploadedDocument = {
-      id: generateId(),
-      file,
-      type: "plans",
-      status: "uploading",
-    };
+  const handleAddPlan = useCallback(async (file: File, model: "flash" | "pro" = "flash", replaceId?: string) => {
+    const targetId = replaceId || generateId();
+    
+    if (replaceId) {
+      // Update existing document status to uploading
+      setPlanDocuments(prev =>
+        prev.map(d => d.id === replaceId ? { ...d, status: "uploading" as DocumentStatus } : d)
+      );
+    } else {
+      const newDoc: UploadedDocument = {
+        id: targetId,
+        file,
+        type: "plans",
+        status: "uploading",
+      };
+      setPlanDocuments(prev => [...prev, newDoc]);
+    }
 
-    setPlanDocuments(prev => [...prev, newDoc]);
     setIsProcessing(true);
     setProcessingMessage("Starting upload...");
 
     // Update to processing status
     setPlanDocuments(prev =>
-      prev.map(d => d.id === newDoc.id ? { ...d, status: "processing" as DocumentStatus } : d)
+      prev.map(d => d.id === targetId ? { ...d, status: "processing" as DocumentStatus } : d)
     );
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("equipment", JSON.stringify(selectedEquipment));
+    formData.append("model_name", model);
     if (scheduleText) {
       formData.append("schedule_text", scheduleText);
     }
@@ -386,7 +400,7 @@ export default function TakeoffsWorkspace() {
         
         // Update document status
         setPlanDocuments(prev =>
-          prev.map(d => d.id === newDoc.id ? { ...d, status: "complete" as DocumentStatus } : d)
+          prev.map(d => d.id === targetId ? { ...d, status: "complete" as DocumentStatus } : d)
         );
 
         // Update summary
@@ -401,7 +415,7 @@ export default function TakeoffsWorkspace() {
     } catch (error: any) {
       console.error("Error uploading plans:", error);
       setPlanDocuments(prev =>
-        prev.map(d => d.id === newDoc.id ? { ...d, status: "error" as DocumentStatus, error: error.message } : d)
+        prev.map(d => d.id === targetId ? { ...d, status: "error" as DocumentStatus, error: error.message } : d)
       );
     } finally {
       clearTimeout(timeoutId);
@@ -425,31 +439,58 @@ export default function TakeoffsWorkspace() {
   }, [completeStep]);
 
   // Handle re-run analysis
-  const handleRerunAnalysis = useCallback(() => {
+  const handleRerunAnalysis = useCallback((model?: "flash" | "pro") => {
     // If we have plans, use the most recent one to re-run
     if (planDocuments.length > 0) {
       const latestPlan = planDocuments[planDocuments.length - 1];
-      handleAddPlan(latestPlan.file);
+      const modelToUse = model || (planData?.modelUsed as "flash" | "pro") || "flash";
+      handleAddPlan(latestPlan.file, modelToUse, latestPlan.id);
     }
-  }, [planDocuments, handleAddPlan]);
+  }, [planDocuments, handleAddPlan, planData]);
 
   // Handle verification reset
   const handleReset = useCallback(() => {
     window.location.reload();
   }, []);
 
-  // Zoom controls
-  const handleZoomIn = useCallback(() => {
-    setZoom(prev => Math.min(prev + 25, 200));
-  }, []);
+  // Handle download summary
+  const handleDownloadSummary = useCallback(async () => {
+    if (!planData || !planData.pdfId) return;
 
-  const handleZoomOut = useCallback(() => {
-    setZoom(prev => Math.max(prev - 25, 25));
-  }, []);
+    setIsDownloading(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/export/summary`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pdfId: planData.pdfId,
+          locations: planData.locations,
+          reviewStatus: reviewStatus,
+          equipmentList: selectedEquipment,
+        }),
+      });
 
-  const handleZoomReset = useCallback(() => {
-    setZoom(100);
-  }, []);
+      if (!response.ok) throw new Error("Failed to generate PDF");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Takeoff_Summary_${new Date().getTime()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error downloading summary:", error);
+      alert("Failed to download summary. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [planData, reviewStatus, selectedEquipment]);
 
   // Determine what to show in main content area
   const hasContent = scheduleDocuments.some(d => d.status === "complete") || currentStep > 1;
@@ -498,32 +539,8 @@ export default function TakeoffsWorkspace() {
         );
 
       case 4:
-        // If we already have plans uploaded and completed, or if we're currently processing,
-        // we shouldn't show the redundant upload button in the main page.
-        // The sidebar handles the upload.
-        if (planDocuments.some(d => d.status === "complete" || d.status === "processing")) {
-          // If complete, we should probably have moved to step 5, but if we're here, 
-          // show a summary or instructions to add more in sidebar.
-          return (
-            <div className="h-full flex flex-col items-center justify-center bg-neutral-50 p-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-bv-blue-100 flex items-center justify-center mb-6">
-                <Loader2 className="h-8 w-8 text-bv-blue-500 animate-spin" />
-              </div>
-              <h2 className="text-xl font-semibold text-neutral-800 mb-2">Analyzing Plans</h2>
-              <p className="text-neutral-500 max-w-md">
-                We're currently scanning your uploaded floor plans. Results will appear in the next step shortly.
-              </p>
-            </div>
-          );
-        }
-        return (
-          <PlanUpload
-            selectedEquipment={selectedEquipment}
-            scheduleText={scheduleText}
-            visualExamples={symbolData}
-            onUploadComplete={handlePlanUploadComplete}
-          />
-        );
+        // Use the sidebar for all uploads to ensure document state is consistent
+        return <EmptyState step={4} />;
 
       case 5:
         if (planData) {
@@ -531,7 +548,8 @@ export default function TakeoffsWorkspace() {
             <Verification
               planData={planData}
               onReset={handleReset}
-              onRerun={handleRerunAnalysis}
+              onRerun={(model) => handleRerunAnalysis(model)}
+              onStatusChange={setReviewStatus}
             />
           );
         }
@@ -546,11 +564,9 @@ export default function TakeoffsWorkspace() {
     <div className="flex flex-col h-screen bg-neutral-50">
       {/* Header */}
       <Header
-        zoom={zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-        canGenerateReport={completedSteps.includes(5)}
+        onDownloadSummary={handleDownloadSummary}
+        isDownloading={isDownloading}
+        canGenerateReport={currentStep === 5 && !!planData}
       />
 
       {/* Main Content */}

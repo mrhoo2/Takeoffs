@@ -1,27 +1,21 @@
 "use client";
 
-import { FileText, Download, Loader2, ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
+import { FileText, Download, Loader2, ZoomIn, ZoomOut, Maximize2, RotateCcw, LogIn } from "lucide-react";
 
 interface HeaderProps {
   onGenerateReport?: () => void;
   canGenerateReport?: boolean;
   isGeneratingReport?: boolean;
-  zoom?: number;
-  onZoomIn?: () => void;
-  onZoomOut?: () => void;
-  onZoomReset?: () => void;
-  onFullscreen?: () => void;
+  onDownloadSummary?: () => void;
+  isDownloading?: boolean;
 }
 
 export default function Header({
   onGenerateReport,
   canGenerateReport = false,
   isGeneratingReport = false,
-  zoom = 100,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onFullscreen,
+  onDownloadSummary,
+  isDownloading = false,
 }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-neutral-200">
@@ -37,77 +31,25 @@ export default function Header({
       </div>
 
       {/* Right: Actions and controls */}
-      <div className="flex items-center gap-3">
-        {/* Zoom controls */}
-        {(onZoomIn || onZoomOut) && (
-          <div className="flex items-center gap-1 mr-2">
-            <button
-              onClick={onZoomOut}
-              className="h-8 w-8 flex items-center justify-center text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors"
-              title="Zoom out"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </button>
-            <span className="text-sm text-neutral-600 min-w-[3rem] text-center">
-              {zoom}%
-            </span>
-            <button
-              onClick={onZoomIn}
-              className="h-8 w-8 flex items-center justify-center text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors"
-              title="Zoom in"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </button>
-            {onFullscreen && (
-              <button
-                onClick={onFullscreen}
-                className="h-8 w-8 flex items-center justify-center text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors ml-1"
-                title="Fullscreen"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </button>
-            )}
-            {onZoomReset && (
-              <button
-                onClick={onZoomReset}
-                className="h-8 w-8 flex items-center justify-center text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors"
-                title="Reset zoom"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        )}
-
+      <div className="flex items-center">
         <div className="h-6 w-px bg-neutral-200" />
-
-        {/* Generate Report button */}
-        {onGenerateReport && (
+        
+        {/* Download Summary (mirrors Generate Report styling) */}
+        {onDownloadSummary && (
           <button
-            onClick={onGenerateReport}
-            disabled={!canGenerateReport || isGeneratingReport}
-            className={`
-              flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
-              transition-all duration-200
-              ${canGenerateReport && !isGeneratingReport
-                ? "bg-bv-blue-500 hover:bg-bv-blue-600 text-white shadow-sm hover:shadow-md"
-                : "bg-neutral-100 text-neutral-400 cursor-not-allowed"
-              }
-            `}
+            onClick={onDownloadSummary}
+            disabled={!canGenerateReport || isDownloading}
+            className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] text-white h-8 rounded-md px-3 gap-2 bg-bv-blue-400 hover:bg-bv-blue-500 mx-3"
           >
-            {isGeneratingReport ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generating...
-              </>
+            {isDownloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <>
-                <FileText className="h-4 w-4" />
-                Generate Report
-              </>
+              <FileText className="h-4 w-4" />
             )}
+            Generate Report
           </button>
         )}
+
       </div>
     </header>
   );
