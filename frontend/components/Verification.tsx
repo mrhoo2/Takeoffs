@@ -212,11 +212,17 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
 
     const [svgContent, setSvgContent] = useState<string | null>(null);
     const [svgLoading, setSvgLoading] = useState(false);
+    
+    // Track actual image dimensions (natural size of loaded image)
+    const [actualImageDimensions, setActualImageDimensions] = useState<{ width: number; height: number } | null>(null);
 
     const totalPages = planData.pageCount || planData.pageInfo?.length || planData.svgPages?.length || (planData.images?.length) || 1;
     
-    // Get current page dimensions
+    // Get current page dimensions from pageInfo (fallback)
     const currentPageInfo = planData.pageInfo?.[currentPage - 1] || planData.svgPages?.[currentPage - 1];
+    
+    // Use actual image dimensions for the overlay (more accurate for coordinate alignment)
+    const displayDimensions = actualImageDimensions || currentPageInfo || { width: 800, height: 600 };
     
     // Fetch SVG content when page changes
     useEffect(() => {
@@ -231,8 +237,7 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
                 setSvgLoading(true);
                 setSvgContent(null);
                 try {
-                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-                    const response = await fetch(`${apiUrl}/pdf/${planData.pdfId}/page/${currentPage}/svg`);
+                    const response = await fetch(`/api/pdf/${planData.pdfId}/page/${currentPage}/svg`);
                     if (response.ok) {
                         const svg = await response.text();
                         setSvgContent(svg);
@@ -439,15 +444,21 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
                                         <img 
                                             src={planData.images[currentPage - 1]} 
                                             alt={`Page ${currentPage}`}
-                                            width={currentPageInfo.width}
-                                            height={currentPageInfo.height}
                                             className="block"
                                             style={{
+                                                // Explicitly set dimensions via style to override any CSS max-width constraints
+                                                width: currentPageInfo.width,
+                                                height: currentPageInfo.height,
+                                                maxWidth: 'none', // Override any global max-width: 100%
                                                 // Prevent the image from being draggable to allow panning the container
                                                 userSelect: 'none',
                                                 pointerEvents: 'none'
                                             }}
-                                            onLoad={() => onPageLoadSuccess({ width: currentPageInfo.width, height: currentPageInfo.height })}
+                                            onLoad={(e) => {
+                                                const img = e.currentTarget;
+                                                console.log(`Image loaded: displayed at ${img.clientWidth} x ${img.clientHeight}, natural: ${img.naturalWidth} x ${img.naturalHeight}, pageInfo: ${currentPageInfo?.width} x ${currentPageInfo?.height}`);
+                                                onPageLoadSuccess({ width: currentPageInfo.width, height: currentPageInfo.height });
+                                            }}
                                         />
                                     ) : svgContent ? (
                                         <SvgPageViewer
@@ -458,8 +469,8 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
                                         />
                                     ) : null}
                                     
-                                    {/* Overlay for sniper dots */}
-                                    {currentPageInfo.width > 0 && (
+                                    {/* Overlay for sniper dots - must match image displayed dimensions exactly */}
+                                    {currentPageInfo && currentPageInfo.width > 0 && (
                                         <div
                                             className="absolute top-0 left-0"
                                             style={{ width: currentPageInfo.width, height: currentPageInfo.height }}
@@ -475,8 +486,8 @@ export default function Verification({ planData, onReset, onRerun, onStatusChang
                                                         globalIndex={globalIndex}
                                                         isSelected={globalIndex === selectedIndex}
                                                         status={reviewStatus[globalIndex]}
-                                                        svgW={currentPageInfo?.width || pageWidth}
-                                                        svgH={currentPageInfo?.height || pageHeight}
+                                                        svgW={currentPageInfo.width}
+                                                        svgH={currentPageInfo.height}
                                                         onSelect={setSelectedIndex}
                                                     />
                                                 );

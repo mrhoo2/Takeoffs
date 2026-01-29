@@ -105,8 +105,7 @@ export default function TakeoffsWorkspace() {
     const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const response = await fetch(`${apiUrl}/upload/schedule`, {
+      const response = await fetch(`/api/upload/schedule`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -183,7 +182,7 @@ export default function TakeoffsWorkspace() {
         if (finalResult.scheduleId && !finalResult.images) {
           setProcessingMessage("Fetching images...");
           try {
-            const imagesResponse = await fetch(`${apiUrl}/schedule/${finalResult.scheduleId}/images`);
+            const imagesResponse = await fetch(`/api/schedule/${finalResult.scheduleId}/images`);
             if (imagesResponse.ok) {
               const imagesData = await imagesResponse.json();
               finalResult.images = imagesData.images;
@@ -321,8 +320,7 @@ export default function TakeoffsWorkspace() {
     const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const response = await fetch(`${apiUrl}/upload/plans`, {
+      const response = await fetch(`/api/upload/plans`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -481,8 +479,7 @@ export default function TakeoffsWorkspace() {
 
     setIsDownloading(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const response = await fetch(`${apiUrl}/export/summary`, {
+      const response = await fetch(`/api/export/summary`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

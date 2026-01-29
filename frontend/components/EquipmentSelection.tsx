@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 interface Equipment {
     type: string;
@@ -8,7 +8,7 @@ interface Equipment {
     is_typical: boolean;
     tags: string[];
     page?: number;
-    bbox?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000 scale
+    bbox?: [number, number, number, number]; // [x_min, y_min, x_max, y_max] 0-1000 scale (standard format)
 }
 
 interface EquipmentSelectionProps {
@@ -17,8 +17,134 @@ interface EquipmentSelectionProps {
     onConfirm: (selected: Equipment[]) => void;
 }
 
+// Fixed ImageWithBbox that properly accounts for object-contain letterboxing
+function ImageWithBbox({ 
+    imageSrc, 
+    bbox, 
+    pageNum, 
+    equipmentType 
+}: { 
+    imageSrc: string; 
+    bbox: [number, number, number, number]; 
+    pageNum: number;
+    equipmentType: string;
+}) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [imageLayout, setImageLayout] = useState<{
+        offsetX: number;
+        offsetY: number;
+        displayWidth: number;
+        displayHeight: number;
+    } | null>(null);
+
+    // Calculate where the image is actually displayed within the container (accounting for object-contain)
+    const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+        const img = e.currentTarget;
+        const container = containerRef.current;
+        if (!container) return;
+
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const imgNaturalWidth = img.naturalWidth;
+        const imgNaturalHeight = img.naturalHeight;
+
+        // Calculate how object-contain scales the image
+        const containerRatio = containerWidth / containerHeight;
+        const imageRatio = imgNaturalWidth / imgNaturalHeight;
+
+        let displayWidth: number;
+        let displayHeight: number;
+        let offsetX: number;
+        let offsetY: number;
+
+        if (imageRatio > containerRatio) {
+            // Image is wider - fits to container width, letterboxed top/bottom
+            displayWidth = containerWidth;
+            displayHeight = containerWidth / imageRatio;
+            offsetX = 0;
+            offsetY = (containerHeight - displayHeight) / 2;
+        } else {
+            // Image is taller - fits to container height, letterboxed left/right
+            displayHeight = containerHeight;
+            displayWidth = containerHeight * imageRatio;
+            offsetX = (containerWidth - displayWidth) / 2;
+            offsetY = 0;
+        }
+
+        setImageLayout({ offsetX, offsetY, displayWidth, displayHeight });
+        
+        console.log(`ImageWithBbox layout for ${equipmentType}:`, {
+            container: { containerWidth, containerHeight },
+            image: { imgNaturalWidth, imgNaturalHeight },
+            display: { displayWidth, displayHeight, offsetX, offsetY }
+        });
+    }, [equipmentType]);
+
+    // bbox format from Gemini: [x_min, y_min, x_max, y_max] in 0-1000 scale
+    const [xmin, ymin, xmax, ymax] = bbox;
+
+    // Calculate bbox position relative to the displayed image area
+    let bboxStyle: React.CSSProperties = { display: 'none' };
+    
+    if (imageLayout) {
+        const { offsetX, offsetY, displayWidth, displayHeight } = imageLayout;
+        
+        // Convert 0-1000 scale to pixels relative to displayed image
+        const left = offsetX + (xmin / 1000) * displayWidth;
+        const top = offsetY + (ymin / 1000) * displayHeight;
+        const width = ((xmax - xmin) / 1000) * displayWidth;
+        const height = ((ymax - ymin) / 1000) * displayHeight;
+        
+        bboxStyle = {
+            position: 'absolute',
+            left: `${left}px`,
+            top: `${top}px`,
+            width: `${width}px`,
+            height: `${height}px`,
+        };
+        
+        console.log(`Bbox position for ${equipmentType}:`, {
+            raw: bbox,
+            pixels: { left, top, width, height }
+        });
+    }
+
+    return (
+        <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-neutral-50">
+            <div className="absolute text-xs bg-neutral-900/80 text-white px-2 py-1 top-0 left-0 z-20 rounded-br">
+                Page {pageNum} | [{xmin},{ymin},{xmax},{ymax}]
+            </div>
+            
+            {/* Full page image scaled to fit with object-contain */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+                src={imageSrc}
+                alt="Schedule Page"
+                className="w-full h-full object-contain"
+                onLoad={handleImageLoad}
+            />
+            
+            {/* Bbox overlay positioned relative to actual image display area */}
+            {imageLayout && (
+                <div
+                    className="border-2 border-red-500 bg-red-500/20 pointer-events-none z-10"
+                    style={bboxStyle}
+                />
+            )}
+        </div>
+    );
+}
+
 export default function EquipmentSelection({ equipmentList, images, onConfirm }: EquipmentSelectionProps) {
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    
+    // Debug logging
+    console.log('EquipmentSelection - images prop:', {
+        exists: !!images,
+        length: images?.length || 0,
+        firstImagePreview: images?.[0] ? images[0].substring(0, 50) + '...' : 'none'
+    });
+    console.log('EquipmentSelection - equipmentList:', equipmentList);
 
     const toggleSelection = (type: string) => {
         const newSelected = new Set(selected);
@@ -50,6 +176,17 @@ export default function EquipmentSelection({ equipmentList, images, onConfirm }:
         parsedList = [];
     }
 
+    // Log raw Gemini bbox data for each equipment item
+    console.log('=== RAW GEMINI BBOX DATA ===');
+    parsedList.forEach((item, idx) => {
+        console.log(`[${idx}] ${item.type}:`, {
+            page: item.page,
+            bbox: item.bbox,
+            bbox_interpretation: item.bbox ? `x: ${item.bbox[0]}-${item.bbox[2]}, y: ${item.bbox[1]}-${item.bbox[3]}` : 'none'
+        });
+    });
+    console.log('=== END BBOX DATA ===');
+
     return (
         <div className="w-full max-w-6xl mx-auto pb-12">
             <h2 className="text-2xl font-bold mb-6 text-neutral-900">Select Equipment to Locate</h2>
@@ -78,37 +215,25 @@ export default function EquipmentSelection({ equipmentList, images, onConfirm }:
                             </div>
                         </div>
 
-                        {/* Visual Verification Snippet */}
-                        {images && item.page && item.bbox && (
-                            <div className="w-full md:w-96 h-40 relative border border-neutral-200 bg-neutral-100 rounded-lg overflow-hidden flex-shrink-0 group-hover:border-bv-blue-300 transition-colors">
-                                <div className="absolute text-xs bg-neutral-900/80 text-white px-2 py-1 top-0 left-0 z-20 rounded-br">
-                                    Page {item.page}
-                                </div>
-
-                                <div
-                                    className="absolute origin-top-left"
-                                    style={{
-                                        width: '300%', // Zoom factor
-                                        transform: `translate(-${item.bbox[1] / 10}%, -${item.bbox[0] / 10}%)`, // Position bbox at top-left
-                                    }}
-                                >
-                                    <img
-                                        src={images[item.page - 1]}
-                                        alt="Schedule Snippet"
-                                        className="w-full h-auto opacity-95 mix-blend-multiply"
-                                    />
-
-                                    {/* Highlight overlay on the image itself */}
-                                    <div
-                                        className="absolute border-2 border-red-500 bg-yellow-300/20 mix-blend-multiply"
-                                        style={{
-                                            top: `${item.bbox[0] / 10}%`,
-                                            left: `${item.bbox[1] / 10}%`,
-                                            height: `${(item.bbox[2] - item.bbox[0]) / 10}%`,
-                                            width: `${(item.bbox[3] - item.bbox[1]) / 10}%`,
-                                        }}
-                                    />
-                                </div>
+                        {/* Visual Verification Snippet - show if we have images and bbox */}
+                        {images && images.length > 0 && item.bbox && item.bbox.length === 4 ? (
+                            <div className="w-full md:w-96 h-48 relative border border-neutral-200 bg-neutral-100 rounded-lg overflow-hidden flex-shrink-0">
+                                <ImageWithBbox
+                                    imageSrc={images[(item.page || 1) - 1] || images[0]}
+                                    bbox={item.bbox}
+                                    pageNum={images[(item.page || 1) - 1] ? (item.page || 1) : 1}
+                                    equipmentType={item.type}
+                                />
+                            </div>
+                        ) : (
+                            <div className="w-full md:w-96 h-48 relative border border-neutral-200 bg-neutral-100 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center text-sm text-neutral-500">
+                                {!images || images.length === 0 ? (
+                                    <span>No images available</span>
+                                ) : !item.bbox ? (
+                                    <span>No bbox data</span>
+                                ) : (
+                                    <span>Invalid bbox: {JSON.stringify(item.bbox)}</span>
+                                )}
                             </div>
                         )}
                     </div>
