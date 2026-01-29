@@ -6,7 +6,7 @@ import { storage } from '@/lib/storage';
 import type { SSEEvent, VisualExamples } from '@/lib/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 900; // 15 minutes
+export const maxDuration = 300; // 5 minutes (Vercel hobby plan max)
 
 function createSSEMessage(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
