@@ -95,6 +95,7 @@ export class PDFService {
 
   /**
    * Convert a single PDF page to SVG
+   * Note: This method is not currently used - images are used instead for better performance
    */
   async convertPdfPageToSvg(fileContent: Buffer, pageNum: number): Promise<{ svg: string; width: number; height: number } | null> {
     try {
@@ -111,12 +112,17 @@ export class PDFService {
       const height = bounds[3] - bounds[1];
       
       // Convert to SVG using mupdf's SVG output
-      const output = new mupdf.DocumentWriter(Buffer.alloc(0), 'svg', '');
+      // Use mupdf.Buffer for proper type compatibility
+      const mupdfBuffer = new mupdf.Buffer();
+      const output = new mupdf.DocumentWriter(mupdfBuffer, 'svg', '');
       const device = output.beginPage(bounds);
       page.run(device, mupdf.Matrix.identity);
       output.endPage();
-      const svgBuffer = output.close();
-      const svg = Buffer.from(svgBuffer).toString('utf-8');
+      output.close();
+      
+      // Get SVG content from the mupdf buffer
+      const svgData = mupdfBuffer.asUint8Array();
+      const svg = new TextDecoder().decode(svgData);
       
       return { svg, width, height };
     } catch (error) {
@@ -222,7 +228,9 @@ export class PDFService {
 
       // Save the document with annotations
       const outputBuffer = doc.saveToBuffer('incremental');
-      return Buffer.from(outputBuffer);
+      // Convert mupdf.Buffer to Node.js Buffer
+      const outputData = outputBuffer.asUint8Array();
+      return Buffer.from(outputData);
       
     } catch (error) {
       console.error('Error generating summary PDF:', error);
@@ -384,7 +392,9 @@ export class PDFService {
 
       // Save the document with annotations
       const outputBuffer = doc.saveToBuffer('incremental');
-      return Buffer.from(outputBuffer);
+      // Convert mupdf.Buffer to Node.js Buffer
+      const outputData = outputBuffer.asUint8Array();
+      return Buffer.from(outputData);
       
     } catch (error) {
       console.error('Error generating summary PDF with layers:', error);
